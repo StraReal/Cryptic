@@ -49,7 +49,7 @@ async def signaling_client(cmd, roomcode, url, username):
                         return sock
 
 def udp_listener(sock):
-    global connected, received
+    global connected, received, last_seen
     """Listens for incoming UDP packets and prints"""
     connected = False
     received = False
@@ -64,7 +64,22 @@ def udp_listener(sock):
             pass
     while True:
         msg, addr = sock.recvfrom(1024)
+        if msg.decode() == "PING":
+            sock.sendto(b"PONG", addr)
+        elif msg.decode() == "PONG":
+            last_seen = time.time()
         print(msg.decode())
+
+def check_timeout(timeout=10):
+    global last_seen
+    while True:
+        time.sleep(1)  # check each second
+        if time.time() - last_seen > timeout:
+            print("Peer disconnected!")
+            break
+
+# timeout thread
+threading.Thread(target=check_timeout, daemon=True).start()
 
 def udp_start(peer_addr, my_name, my_port):
     global connected, peer_ip, peer_port
@@ -97,7 +112,6 @@ def udp_start(peer_addr, my_name, my_port):
         time.sleep(0.5)
     print('Succesfully connected')
     return sock
-
 
 def sending_messages(sock):
     global peer_ip, peer_port, name
@@ -153,14 +167,14 @@ def generate_session_code(length=6):
 def open_connection():
     global public_partner, SERVER_URL, my_port, name
     SERVER_URL = get_server_info()
-    name = input("What username do you want to connect with? (No spaces allowed)\n")
+    name = input("What username do you want to use?\n")
     choice = input("Do you want to create a room (0) or join one (1)?\n")
     while True:
         if choice == '0':
             session_code = generate_session_code()
             print("Session code:", session_code)
-            asyncio.run(signaling_client('CREATE', session_code, SERVER_URL, name))
-            break
+            sock = asyncio.run(signaling_client('CREATE', session_code, SERVER_URL, name))
+            return sock
         elif choice == '1':
             session_code = input("Enter room code:\n")
             sock = asyncio.run(signaling_client('JOIN', session_code, SERVER_URL, name))
@@ -171,9 +185,6 @@ def main():
     sock = open_connection()
     while running:
         sending_messages(sock)
-
-
-
 
 if __name__=='__main__':
     main()
