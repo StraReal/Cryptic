@@ -47,6 +47,10 @@ async def signaling_client(cmd, roomcode, url, username):
                         _, peer_name, peer_addr = msg.data.split(" ", 2)
                         sock = udp_start(peer_addr.split(":"), username, my_port)
                         return sock
+                    elif msg.data.startswith("ROOM_INEXISTENT"):
+                        # here the server gave you the ip:port of the other peer
+                        print(f"Room {roomcode} doesn't exist.")
+                        return 1
 
 def udp_listener(sock):
     global connected, received, last_seen
@@ -77,9 +81,6 @@ def check_timeout(timeout=10):
         if time.time() - last_seen > timeout:
             print("Peer disconnected!")
             break
-
-# timeout thread
-threading.Thread(target=check_timeout, daemon=True).start()
 
 def udp_start(peer_addr, my_name, my_port):
     global connected, peer_ip, peer_port
@@ -168,21 +169,30 @@ def open_connection():
     global public_partner, SERVER_URL, my_port, name
     SERVER_URL = get_server_info()
     name = input("What username do you want to use?\n")
-    choice = input("Do you want to create a room (0) or join one (1)?\n")
     while True:
+        choice = input("Do you want to create a room (0) or join one (1)?\n")
         if choice == '0':
             session_code = generate_session_code()
             print("Session code:", session_code)
-            sock = asyncio.run(signaling_client('CREATE', session_code, SERVER_URL, name))
+            sock = None
+            while sock is None:
+                sock = asyncio.run(signaling_client('CREATE', session_code, SERVER_URL, name))
             return sock
         elif choice == '1':
             session_code = input("Enter room code:\n")
-            sock = asyncio.run(signaling_client('JOIN', session_code, SERVER_URL, name))
+            while sock is None:
+                sock = asyncio.run(signaling_client('JOIN', session_code, SERVER_URL, name))
+                if sock == 1:
+                    break
+            if sock == 1:
+                continue
             return sock
 
 def main():
     running = True
-    sock = open_connection()
+    sock = open_connection() # open_connection returns None in case of timeout with SS
+    # timeout thread
+    threading.Thread(target=check_timeout, daemon=True).start()
     while running:
         sending_messages(sock)
 
