@@ -14,3 +14,5 @@ I was thinking of creating accounts, but that goes against the idea of a decentr
 Anyone can try it by using this as url: https://signalingserverdomain.download
 
 There isn't a team behind this, so I have to rely on people to keep this project going, but I would gladly form a team if anyone was up for it. My discord is in my account.
+
+Each room has a life-span of 1 hour. It works this way because checking if a room is still open would mean knowing how long two people have been chatting for, and rooms can't be up forever.
