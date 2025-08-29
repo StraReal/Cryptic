@@ -180,6 +180,7 @@ def open_connection():
             return sock
         elif choice == '1':
             session_code = input("Enter room code:\n")
+            sock = None
             while sock is None:
                 sock = asyncio.run(signaling_client('JOIN', session_code, SERVER_URL, name))
                 if sock == 1:
