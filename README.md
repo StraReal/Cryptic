@@ -8,5 +8,9 @@ I'll probably make a signaling server available to anyone to use, but until then
 
 To be able to chat, run the chat.py script and enter the IP of the signaling server you'll be using.
 Then you can create a room or join one. 
-Each user will have a session-unique UUID.
+
 I was thinking of creating accounts, but that goes against the idea of a decentralized chatting service.
+
+Anyone can try it by using this as url: https://signalingserverdomain.download
+
+There isn't a team behind this, so I have to rely on people to keep this project going, but I would gladly form a team if anyone was up for it. My discord is in my account.
