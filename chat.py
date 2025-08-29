@@ -68,16 +68,19 @@ def udp_listener(sock):
             pass
     while True:
         msg, addr = sock.recvfrom(1024)
-        if msg.decode() == "PING":
-            sock.sendto(b"PONG", addr)
-        elif msg.decode() == "PONG":
+        if msg.decode() == "#PING":
+            sock.sendto(b"#PONG", addr)
+        elif msg.decode() == "#PONG":
             last_seen = time.time()
-        print(msg.decode())
+        if not msg.decode().startswith('#'):
+            print(msg.decode())
 
-def check_timeout(timeout=10):
-    global last_seen
+def check_timeout(sock, timeout=10):
+    global last_seen, peer_ip, peer_port
+    last_seen = time.time()
     while True:
         time.sleep(1)  # check each second
+        sock.sendto(b"#PING", (peer_ip, peer_port))
         if time.time() - last_seen > timeout:
             print("Peer disconnected!")
             break
@@ -116,7 +119,7 @@ def udp_start(peer_addr, my_name, my_port):
 
 def sending_messages(sock):
     global peer_ip, peer_port, name
-    """Send messages to peer until he disconnects"""
+    """Send messages to peer until /quit"""
     while True:
         msg = input("")  # get message from the console
         if msg.lower() == "/quit":
@@ -190,12 +193,10 @@ def open_connection():
             return sock
 
 def main():
-    running = True
     sock = open_connection() # open_connection returns None in case of timeout with SS
     # timeout thread
-    threading.Thread(target=check_timeout, daemon=True).start()
-    while running:
-        sending_messages(sock)
+    threading.Thread(target=check_timeout, args=(sock, ), daemon=True).start()
+    sending_messages(sock)
 
 if __name__=='__main__':
     main()
