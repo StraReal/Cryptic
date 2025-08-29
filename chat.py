@@ -70,8 +70,7 @@ def udp_listener(sock):
         try:
             msg, addr = sock.recvfrom(1024)
         except ConnectionResetError:
-            print("Peer disconnected!")
-            break
+            sys.exit("Peer disconnected!")
         if msg.decode() == "#PING":
             sock.sendto(b"#PONG", addr)
         elif msg.decode() == "#PONG":
@@ -86,8 +85,7 @@ def check_timeout(sock, timeout=10):
         time.sleep(1)  # check each second
         sock.sendto(b"#PING", (peer_ip, peer_port))
         if time.time() - last_seen > timeout:
-            print("Peer disconnected!")
-            break
+            sys.exit("Peer disconnected!")
 
 def udp_start(peer_addr, my_name, my_port):
     global connected, peer_ip, peer_port
