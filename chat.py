@@ -7,16 +7,13 @@ import sys
 import threading
 import asyncio
 import time
-
 from aiohttp import ClientSession, WSMsgType
 import uuid
 import rsa
-import stun
 
 public_key, private_key = rsa.newkeys(1024)
 public_partner = None
 
-SERVER_PORT = 5000 # port of signaling server
 CONFIG_FILE = "config.json"
 MAX_CHUNK = 115
 
@@ -32,27 +29,45 @@ def save_config():
         json.dump(config, f, indent=4)
 
 async def signaling_client(cmd, roomcode, url, username):
+    global my_port
     async with ClientSession() as session:
         async with session.ws_connect(url) as ws:
-            # esempio: Peer A crea stanza
             await ws.send_str(f"{cmd} room{roomcode} {username}")
 
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
-                    print("Received from server:", msg.data)
-
-                    if msg.data.startswith("PEER"):
-                        # qui il server ti ha dato IP:porta dell'altro peer
+                    if msg.data.startswith("ROOM_CREATED"):
+                        my_port = msg.data.split(" ")[2].split(':')[1]
+                        print(f"Room {roomcode} created")
+                    elif msg.data.startswith("JOIN_ROOM"):
+                        my_port = msg.data.split(" ")[2].split(':')[1]
+                        print(f"Room {roomcode} exists. Joining...")
+                    elif msg.data.startswith("PEER"):
+                        # here the server gave you the ip:port of the other peer
                         _, peer_name, peer_addr = msg.data.split(" ", 2)
-                        udp_start(peer_addr.split(":"), username)
+                        sock = udp_start(peer_addr.split(":"), username, my_port)
+                        return sock
 
 def udp_listener(sock):
+    global connected, received
     """Listens for incoming UDP packets and prints"""
+    connected = False
+    received = False
+    while not connected:
+        try:
+            m=sock.recvfrom(1024)
+            m=str(m)
+            received = True
+            if 'CONFIRMRECEIVED' in m:
+                connected = True
+        except ConnectionResetError:
+            pass
     while True:
-        data, addr = sock.recvfrom(1024)
-        print(f"[UDP] Received from {addr}: {data.decode()}")
+        msg, addr = sock.recvfrom(1024)
+        print(msg.decode())
 
-def udp_start(peer_addr, my_name):
+def udp_start(peer_addr, my_name, my_port):
+    global connected, peer_ip, peer_port
     """
     Avvia listener e manda pacchetti HELLO al peer.
     peer_addr: tuple (ip, port)
@@ -63,21 +78,40 @@ def udp_start(peer_addr, my_name):
 
     # crea socket UDP locale
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", 0))  # 0 = porta scelta dal sistema
-    my_port = sock.getsockname()[1]
+    sock.bind(("0.0.0.0", int(my_port)))
     print(f"[UDP] Listening on {my_port}")
 
-    # avvia thread listener
-    threading.Thread(target=udp_listener, args=(sock,), daemon=True).start()
-
-    # manda più pacchetti al peer
-    for i in range(10):
-        msg = f"HELLO from {my_name} #{i}".encode()
+    # starts listener on a separate thread
+    t = threading.Thread(target=udp_listener, args=(sock,), daemon=True)
+    t.start()
+    print('Connecting...')
+    i=0
+    while not connected:
+        if not received:
+            msg = f"HELLO from {my_name} #{i}".encode()
+            i += 1
+        else:
+            msg = b"CONFIRMRECEIVED"
+            connected = True
         sock.sendto(msg, (peer_ip, peer_port))
-        print(f"[UDP] Sent to {peer_ip}:{peer_port}: {msg}")
         time.sleep(0.5)
-
+    print('Succesfully connected')
     return sock
+
+
+def sending_messages(sock):
+    global peer_ip, peer_port, name
+    """Send messages to peer until he disconnects"""
+    while True:
+        msg = input("")  # get message from the console
+        if msg.lower() == "/quit":
+            print("Quitting...")
+            break
+        print("\033[F\033[K", end="")
+        print(f"(YOU) {msg}")
+        full_msg = f"[{name}]: {msg}"
+        sock.sendto(full_msg.encode(), (peer_ip, peer_port))
+
 
 def get_server_info():
     """
@@ -88,68 +122,55 @@ def get_server_info():
         # Saved server exists
         print("Where do you want to connect?")
         print("(0) Saved server")
+        print("(00) See saved server")
         print("(1) Change server")
         choice = input("Enter number: ").strip()
 
-        if choice == "0":
-            server_url = config["server_url"]
-            server_port = config.get("server_port", SERVER_PORT)
-
-            # Ask if the user wants to change the port
-            change_port = input(f"Current port is {server_port}. Change port? (y/n): ").lower().strip()
-            if change_port == "y":
-                port_input = input(f"Enter new port [{SERVER_PORT}]: ").strip()
-                server_port = int(port_input) if port_input else SERVER_PORT
-                config["server_port"] = server_port
+        while True:
+            if choice == "0":
+                server_url = config["server_url"]
+                break
+            elif choice == '00':
+                print(f'Saved URL: {config["server_url"]}')
+                choice = input("Enter number: ").strip()
+            elif choice == "1":
+                # Change server IP
+                server_url = input("Enter URL of your Signaling Server: ").strip()
+                config["server_url"] = server_url
                 save_config()
-
-        elif choice == "1":
-            # Change server IP
-            server_url = input("Enter URL of your Signaling Server: ").strip()
-            port_input = input(f"Enter port [{SERVER_PORT}]: ").strip()
-            server_port = int(port_input) if port_input else SERVER_PORT
-            config["server_url"] = server_url
-            config["server_port"] = server_port
-            save_config()
-        else:
-            print("Invalid choice, using saved server by default.")
-            server_url = config["server_url"]
-            server_port = config.get("server_port", SERVER_PORT)
-
+                break
     else:
         # No saved server, ask directly
         server_url = input("Enter URL of your Signaling Server: ").strip()
-        port_input = input(f"Enter port [{SERVER_PORT}]: ").strip()
-        server_port = int(port_input) if port_input else SERVER_PORT
         config["server_url"] = server_url
-        config["server_port"] = server_port
         save_config()
 
-    return server_url, server_port
+    return server_url
 
 def generate_session_code(length=6):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 def open_connection():
-    global public_partner, SERVER_URL, SERVER_PORT
-    SERVER_URL, SERVER_PORT = get_server_info()
+    global public_partner, SERVER_URL, my_port, name
+    SERVER_URL = get_server_info()
     name = input("What username do you want to connect with? (No spaces allowed)\n")
     choice = input("Do you want to create a room (0) or join one (1)?\n")
-    if choice == '0':
-        session_code = generate_session_code()
-        print("Session code:", session_code)
-        asyncio.run(signaling_client('CREATE', session_code, SERVER_URL, name))
-        print(f"Connected to signaling server as {name}")
-    elif choice == '1':
-        session_code = input("Enter room code:\n")
-        asyncio.run(signaling_client('JOIN', session_code, SERVER_URL, name))
-        print(f"Connected to signaling server as {name}")
+    while True:
+        if choice == '0':
+            session_code = generate_session_code()
+            print("Session code:", session_code)
+            asyncio.run(signaling_client('CREATE', session_code, SERVER_URL, name))
+            break
+        elif choice == '1':
+            session_code = input("Enter room code:\n")
+            sock = asyncio.run(signaling_client('JOIN', session_code, SERVER_URL, name))
+            return sock
 
 def main():
     running = True
-    open_connection()
+    sock = open_connection()
     while running:
-        msg = input('')
+        sending_messages(sock)
 
 
 

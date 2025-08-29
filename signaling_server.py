@@ -17,7 +17,7 @@ async def websocket_handler(request):
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
                 data = msg.data.strip()
-                print(f"[SERVER] Received: {data} from {peer_addr}")
+                print(f"[{peer_addr}] {data}")
 
                 parts = data.split(" ")
                 cmd = parts[0].upper()
@@ -28,19 +28,17 @@ async def websocket_handler(request):
                         await ws.send_str(f"ERROR Room {room_code} already exists")
                     else:
                         rooms[room_code] = {username: ws}
-                        await ws.send_str(f"ROOM_CREATED {room_code}")
+                        await ws.send_str(f"ROOM_CREATED {room_code} {peer_addr}")
                         print(f"[SERVER] Room {room_code} created by {username}")
 
                 elif cmd == "JOIN" and len(parts) >= 3:
                     room_code, username = parts[1], parts[2]
                     if room_code not in rooms:
                         await ws.send_str(f"ERROR Room {room_code} doesn't exist")
-                        print(rooms)
                     else:
-                        # add peer to room
                         rooms[room_code][username] = ws
-                        await ws.send_str(f"JOINED {room_code}")
-                        print(f"[SERVER] {username} è entrato in {room_code}")
+                        await ws.send_str(f"JOIN_ROOM {room_code} {peer_addr}")
+                        print(f"[SERVER] {username} joined {room_code}")
 
                         # se ci sono almeno due peer → scambio info
                         if len(rooms[room_code]) >= 2:
