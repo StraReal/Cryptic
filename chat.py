@@ -67,7 +67,11 @@ def udp_listener(sock):
         except ConnectionResetError:
             pass
     while True:
-        msg, addr = sock.recvfrom(1024)
+        try:
+            msg, addr = sock.recvfrom(1024)
+        except ConnectionResetError:
+            print("Peer disconnected!")
+            break
         if msg.decode() == "#PING":
             sock.sendto(b"#PONG", addr)
         elif msg.decode() == "#PONG":
