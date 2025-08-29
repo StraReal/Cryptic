@@ -3,6 +3,13 @@ from aiohttp import web
 
 rooms = {}  # { room_code: { username: ws } }
 
+async def remove_room_after_timeout(room_code, timeout=3600):
+    """Deletes a room after 'timeout' seconds."""
+    await asyncio.sleep(timeout)
+    if room_code in rooms:
+        print(f"[SERVER] Room {room_code} expired after {timeout} seconds")
+        del rooms[room_code]
+
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -25,29 +32,38 @@ async def websocket_handler(request):
                 if cmd == "CREATE" and len(parts) >= 3:
                     room_code, username = parts[1], parts[2]
                     if room_code in rooms:
-                        await ws.send_str(f"ERROR Room {room_code} already exists")
+                        msg = f"ROOM_TAKEN {room_code} {peer_addr}"
+                        await ws.send_str(msg)
+                        print(f'[SERVER] {msg}')
                     else:
                         rooms[room_code] = {username: ws}
-                        await ws.send_str(f"ROOM_CREATED {room_code} {peer_addr}")
-                        print(f"[SERVER] Room {room_code} created by {username}")
+                        msg = f"ROOM_CREATED {room_code} {peer_addr}"
+                        await ws.send_str(msg)
+                        print(f'[SERVER] {msg}')
+
 
                 elif cmd == "JOIN" and len(parts) >= 3:
                     room_code, username = parts[1], parts[2]
                     if room_code not in rooms:
-                        await ws.send_str(f"ERROR Room {room_code} doesn't exist")
+                        msg = f"ROOM_INEXISTENT {room_code} {peer_addr}"
+                        await ws.send_str(msg)
+                        print(f'[SERVER] {msg}')
                     else:
                         rooms[room_code][username] = ws
-                        await ws.send_str(f"JOIN_ROOM {room_code} {peer_addr}")
-                        print(f"[SERVER] {username} joined {room_code}")
+                        msg = f"JOIN_ROOM {room_code} {peer_addr}"
+                        await ws.send_str(msg)
+                        print(f'[SERVER] {msg}')
 
-                        # se ci sono almeno due peer → scambio info
+                        # if there's atleast two peers connected
                         if len(rooms[room_code]) >= 2:
                             peers = list(rooms[room_code].items())
                             for i, (uname, sock) in enumerate(peers):
                                 other_uname, other_sock = peers[1 - i]
-                                # prendi IP e porta dell'altro peer
+                                # get IP and port of other peer
                                 other_ip, other_port = other_sock._req.transport.get_extra_info('peername')
-                                await sock.send_str(f"PEER {other_uname} {other_ip}:{other_port}")
+                                msg = f"PEER {other_uname} {other_ip}:{other_port}"
+                                await sock.send_str(msg)
+                                print(f'[SERVER] {msg}')
 
                 else:
                     await ws.send_str("ERROR invalid command")
