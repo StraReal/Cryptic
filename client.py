@@ -8,7 +8,6 @@ import threading
 import asyncio
 import time
 from aiohttp import ClientSession, WSMsgType
-import uuid
 import rsa
 
 public_key, private_key = rsa.newkeys(1024)
