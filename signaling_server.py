@@ -1,14 +1,20 @@
 import asyncio
 from aiohttp import web
 
-rooms = {}  # { room_code: { username: ws } }
+# rooms = { room_code: { 'peers': { username: ws }, 'saved': bool } }
+rooms = {}
+
+def delete_room(room_code):
+    del rooms[room_code]
+    print(f"[SERVER] ROOM_DELETED {room_code}")
 
 async def remove_room_after_timeout(room_code, timeout=3600):
-    """Deletes a room after 'timeout' seconds."""
+    """Deletes a room after 'timeout' seconds if it's not saved."""
     await asyncio.sleep(timeout)
-    if room_code in rooms:
-        print(f"[SERVER] Room {room_code} expired after {timeout} seconds")
-        del rooms[room_code]
+    room = rooms.get(room_code)
+    if room:
+        print(f"[SERVER] ROOM_TIMEOUT {room_code}")
+        delete_room(room_code)
 
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
@@ -30,17 +36,18 @@ async def websocket_handler(request):
                 cmd = parts[0].upper()
 
                 if cmd == "CREATE" and len(parts) >= 3:
-                    room_code, username = parts[1], parts[2]
+                    room_code, username = parts[1], parts[2].replace(' ','_')
                     if room_code in rooms:
                         msg = f"ROOM_TAKEN {room_code} {peer_addr}"
                         await ws.send_str(msg)
                         print(f'[SERVER] {msg}')
                     else:
-                        rooms[room_code] = {username: ws}
+                        rooms[room_code] = {"peers": {username: ws}, "saved": False}
                         msg = f"ROOM_CREATED {room_code} {peer_addr}"
                         await ws.send_str(msg)
                         print(f'[SERVER] {msg}')
-
+                        # auto-remove after 1h
+                        asyncio.create_task(remove_room_after_timeout(room_code))
 
                 elif cmd == "JOIN" and len(parts) >= 3:
                     room_code, username = parts[1], parts[2]
@@ -49,17 +56,21 @@ async def websocket_handler(request):
                         await ws.send_str(msg)
                         print(f'[SERVER] {msg}')
                     else:
-                        rooms[room_code][username] = ws
+                        room = rooms[room_code]
+                        room["peers"][username] = ws
                         msg = f"JOIN_ROOM {room_code} {peer_addr}"
                         await ws.send_str(msg)
                         print(f'[SERVER] {msg}')
 
-                        # if there's atleast two peers connected
-                        if len(rooms[room_code]) >= 2:
-                            peers = list(rooms[room_code].items())
+                        # if atleast 2 people are in it, mark the room as "saved": it's up for deletion in 1 hour
+                        if len(room["peers"]) >= 2:
+                            room["saved"] = True
+
+                        # notify the peers
+                        if len(room["peers"]) >= 2:
+                            peers = list(room["peers"].items())
                             for i, (uname, sock) in enumerate(peers):
                                 other_uname, other_sock = peers[1 - i]
-                                # get IP and port of other peer
                                 other_ip, other_port = other_sock._req.transport.get_extra_info('peername')
                                 msg = f"PEER {other_uname} {other_ip}:{other_port}"
                                 await sock.send_str(msg)
@@ -69,13 +80,16 @@ async def websocket_handler(request):
                     await ws.send_str("ERROR invalid command")
 
     finally:
-        # clean-up if peer disconnects
-        if room_code and username:
-            if room_code in rooms and username in rooms[room_code]:
-                del rooms[room_code][username]
-                if not rooms[room_code]:
-                    del rooms[room_code]
+        # clean-up if the host disconnects
         print(f"[SERVER] Peer {peer_addr} disconnected")
+        if room_code and username:
+            room = rooms.get(room_code)
+            if room:
+                if username in room["peers"]:
+                    del room["peers"][username]
+                # if the room isn't "saved", delete it
+                if not room["saved"] and not room["peers"]:
+                    delete_room(room_code)
 
     return ws
 
