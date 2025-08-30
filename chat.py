@@ -90,9 +90,9 @@ def check_timeout(sock, timeout=10):
 def udp_start(peer_addr, my_name, my_port):
     global connected, peer_ip, peer_port
     """
-    Avvia listener e manda pacchetti HELLO al peer.
+    Starts-up listener and sends HELLO packets to peer.
     peer_addr: tuple (ip, port)
-    my_name: nome del peer locale (per identificarsi)
+    my_name: name of local peer (to identify themselves)
     """
     peer_ip, peer_port = peer_addr
     peer_port = int(peer_port)
