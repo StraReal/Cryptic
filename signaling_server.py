@@ -81,12 +81,13 @@ async def websocket_handler(request):
                         # notify the peers
                         if len(room["peers"]) >= 2:
                             peers = list(room["peers"].items())
-                            for i, (uname, sock) in enumerate(peers):
+                            for i, (uname, inf) in enumerate(peers):
                                 other_uname, other_addr = peers[1 - i]
-                                sock = sock[0]
+                                sock, my_addr = inf
                                 other_addr = other_addr[1]
                                 other_ip, other_port = other_addr.split(":")
-                                msg = f"PEER {other_uname} {other_ip if other_ip!=peer_ip else '127.0.0.1'}:{other_port}"
+                                my_ip, my_port = my_addr.split(":")
+                                msg = f"PEER {other_uname} {other_ip if other_ip!=my_ip else '127.0.0.1'}:{other_port}"
                                 await sock.send_str(msg)
                                 print(f'[SERVER] {msg}')
 
@@ -109,7 +110,8 @@ async def websocket_handler(request):
 
 app = web.Application()
 app.router.add_get("/", index)          # Homepage → website.html
-app.router.add_get("/ws", websocket_handler)         #/ws lead to WebSocket
+app.router.add_get("/ws", websocket_handler)          #/ws lead to WebSocket
+app.router.add_static('/assets/', path='assets', name='assets')
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=5000)

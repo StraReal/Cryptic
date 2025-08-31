@@ -7,17 +7,14 @@ import sys
 import threading
 import asyncio
 import time
-from logging import exception
-
 import requests
 from aiohttp import ClientSession, WSMsgType
-import rsa
+#import rsa
 
 #public_key, private_key = rsa.newkeys(1024)
 public_partner = None
 
 CONFIG_FILE = "config.json"
-MAX_CHUNK = 115
 
 # --- Load existing config ---
 if os.path.exists(CONFIG_FILE):
@@ -66,8 +63,8 @@ def udp_listener(sock):
     received = False
     while not connected:
         try:
-            m=sock.recvfrom(1024)
-            m=str(m)
+            m = sock.recvfrom(1024).decode()
+            print(m)
             received = True
             if 'CONFIRMRECEIVED' in m:
                 connected = True
@@ -107,7 +104,7 @@ def udp_start(peer_addr, my_name, my_port):
     peer_ip, peer_port = peer_addr
     peer_port = int(peer_port)
 
-    # crea socket UDP locale
+    # creates local UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", int(my_port)))
     print(f"[UDP] Listening on {my_port}")
@@ -125,6 +122,7 @@ def udp_start(peer_addr, my_name, my_port):
             msg = b"CONFIRMRECEIVED"
             connected = True
         sock.sendto(msg, (peer_ip, peer_port))
+        print(msg.decode(), (peer_ip, peer_port))
         time.sleep(0.5)
     print('Succesfully connected')
     return sock
