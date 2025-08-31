@@ -7,21 +7,29 @@ import sys
 import threading
 import asyncio
 import time
+from logging import exception
+
+import requests
 from aiohttp import ClientSession, WSMsgType
 import rsa
 
-public_key, private_key = rsa.newkeys(1024)
+#public_key, private_key = rsa.newkeys(1024)
 public_partner = None
 
 CONFIG_FILE = "config.json"
 MAX_CHUNK = 115
 
-# --- Carica config esistente ---
+# --- Load existing config ---
 if os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
 else:
     config = {}
+
+try:
+    my_ip = requests.get("https://api.ipify.org").text
+except requests.exceptions.ConnectionError as e:
+    print('Error occurred retrieving IP:', e)
 
 def save_config():
     with open(CONFIG_FILE, "w") as f:
@@ -31,7 +39,7 @@ async def signaling_client(cmd, roomcode, url, username):
     global my_port
     async with ClientSession() as session:
         async with session.ws_connect(url) as ws:
-            await ws.send_str(f"{cmd} room{roomcode} {username}")
+            await ws.send_str(f"{cmd} room{roomcode} {username} {my_ip}")
 
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
@@ -65,26 +73,29 @@ def udp_listener(sock):
                 connected = True
         except ConnectionResetError:
             pass
+    last_seen = time.time()
     while True:
         try:
             msg, addr = sock.recvfrom(1024)
         except ConnectionResetError:
-            sys.exit("Peer disconnected!")
+            print("Peer disconnected!")
+            sys.exit()
         if msg.decode() == "#PING":
             sock.sendto(b"#PONG", addr)
         elif msg.decode() == "#PONG":
             last_seen = time.time()
-        if not msg.decode().startswith('#'):
+        if not msg.decode().startswith(' '):
             print(msg.decode())
 
 def check_timeout(sock, timeout=10):
     global last_seen, peer_ip, peer_port
-    last_seen = time.time()
     while True:
         time.sleep(1)  # check each second
         sock.sendto(b"#PING", (peer_ip, peer_port))
+        print(time.time() - last_seen)
         if time.time() - last_seen > timeout:
-            sys.exit("Peer disconnected!")
+            print("Peer disconnected!")
+            sys.exit()
 
 def udp_start(peer_addr, my_name, my_port):
     global connected, peer_ip, peer_port
@@ -105,7 +116,7 @@ def udp_start(peer_addr, my_name, my_port):
     t = threading.Thread(target=udp_listener, args=(sock,), daemon=True)
     t.start()
     print('Connecting...')
-    i=0
+    i = 0
     while not connected:
         if not received:
             msg = f"HELLO from {my_name} #{i}".encode()
@@ -147,20 +158,20 @@ def get_server_info():
 
         while True:
             if choice == "0":
-                server_url = config["server_url"]
+                server_url = config["server_url"]+'/ws'
                 break
             elif choice == '00':
                 print(f'Saved URL: {config["server_url"]}')
                 choice = input("Enter number: ").strip()
             elif choice == "1":
                 # Change server IP
-                server_url = input("Enter URL of your Signaling Server: ").strip()
-                config["server_url"] = server_url
+                server_url = input("Enter URL of your Signaling Server: ").strip()+'/ws'
+                config["server_url"] = server_url[:-3]
                 save_config()
                 break
     else:
         # No saved server, ask directly
-        server_url = input("Enter URL of your Signaling Server: ").strip()
+        server_url = input("Enter URL of your Signaling Server: ").strip()+'/ws'
         config["server_url"] = server_url
         save_config()
 

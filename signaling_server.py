@@ -1,5 +1,6 @@
 import asyncio
 from aiohttp import web
+import pathlib
 
 # rooms = { room_code: { 'peers': { username: ws }, 'saved': bool } }
 rooms = {}
@@ -7,6 +8,12 @@ rooms = {}
 def delete_room(room_code):
     del rooms[room_code]
     print(f"[SERVER] ROOM_DELETED {room_code}")
+
+BASE_DIR = pathlib.Path(__file__).parent
+INDEX_FILE = BASE_DIR / "website.html"
+
+async def index(request):
+    return web.FileResponse(INDEX_FILE)
 
 async def remove_room_after_timeout(room_code, timeout=3600):
     """Deletes a room after 'timeout' seconds if it's not saved."""
@@ -20,8 +27,11 @@ async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    peer_ip, peer_port = request.transport.get_extra_info('peername')
-    peer_addr = f"{peer_ip}:{peer_port}"
+    peername = request.transport.get_extra_info('peername')
+    if peername is None:
+        peer_port = None
+    else:
+        peer_port = peername[1]
 
     username = None
     room_code = None
@@ -30,10 +40,12 @@ async def websocket_handler(request):
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
                 data = msg.data.strip()
-                print(f"[{peer_addr}] {data}")
 
                 parts = data.split(" ")
                 cmd = parts[0].upper()
+                peer_ip = parts[3]
+                peer_addr = f'{peer_ip}:{peer_port}'
+                print(f"[{peer_addr}] {data}")
 
                 if cmd == "CREATE" and len(parts) >= 3:
                     room_code, username = parts[1], parts[2].replace(' ','_')
@@ -42,7 +54,7 @@ async def websocket_handler(request):
                         await ws.send_str(msg)
                         print(f'[SERVER] {msg}')
                     else:
-                        rooms[room_code] = {"peers": {username: ws}, "saved": False}
+                        rooms[room_code] = {"peers": {username: (ws, peer_addr)}, "saved": False}
                         msg = f"ROOM_CREATED {room_code} {peer_addr}"
                         await ws.send_str(msg)
                         print(f'[SERVER] {msg}')
@@ -57,7 +69,7 @@ async def websocket_handler(request):
                         print(f'[SERVER] {msg}')
                     else:
                         room = rooms[room_code]
-                        room["peers"][username] = ws
+                        room["peers"][username] = (ws, peer_addr)
                         msg = f"JOIN_ROOM {room_code} {peer_addr}"
                         await ws.send_str(msg)
                         print(f'[SERVER] {msg}')
@@ -70,9 +82,11 @@ async def websocket_handler(request):
                         if len(room["peers"]) >= 2:
                             peers = list(room["peers"].items())
                             for i, (uname, sock) in enumerate(peers):
-                                other_uname, other_sock = peers[1 - i]
-                                other_ip, other_port = other_sock._req.transport.get_extra_info('peername')
-                                msg = f"PEER {other_uname} {other_ip}:{other_port}"
+                                other_uname, other_addr = peers[1 - i]
+                                sock = sock[0]
+                                other_addr = other_addr[1]
+                                other_ip, other_port = other_addr.split(":")
+                                msg = f"PEER {other_uname} {other_ip if other_ip!=peer_ip else '127.0.0.1'}:{other_port}"
                                 await sock.send_str(msg)
                                 print(f'[SERVER] {msg}')
 
@@ -85,7 +99,7 @@ async def websocket_handler(request):
         if room_code and username:
             room = rooms.get(room_code)
             if room:
-                if username in room["peers"]:
+                if username in room["peers"] and not room["saved"]:
                     del room["peers"][username]
                 # if the room isn't "saved", delete it
                 if not room["saved"] and not room["peers"]:
@@ -94,7 +108,8 @@ async def websocket_handler(request):
     return ws
 
 app = web.Application()
-app.router.add_get("/", websocket_handler)
+app.router.add_get("/", index)          # Homepage → website.html
+app.router.add_get("/ws", websocket_handler)         #/ws lead to WebSocket
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=5000)
