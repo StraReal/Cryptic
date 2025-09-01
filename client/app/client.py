@@ -9,12 +9,39 @@ import asyncio
 import time
 import requests
 from aiohttp import ClientSession, WSMsgType
+import tkinter as tk
+from tkinter import filedialog
 #import rsa
 
 #public_key, private_key = rsa.newkeys(1024)
 public_partner = None
 
 CONFIG_FILE = "config.json"
+
+def cmd_sendfile(sock, *args):
+    # Creating a hidden root
+    root = tk.Tk()
+    root.withdraw()  # Hides the main window
+
+    # Directly open the dialogue
+    path = filedialog.askopenfilename(title="Select a file")
+
+    root.destroy()  # Closes the hidden root
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        # manda tutto il contenuto via socket
+        sock.sendto(data, (peer_ip, peer_port))
+    except Exception as e:
+        print(f"Couldn't send file: {e}")
+def cmd_quit(*args):
+    print("Quitting...")
+    sys.exit()
+
+commands = {
+    "sendfile": cmd_sendfile,
+    "quit": cmd_quit,
+}
 
 # --- Load existing config ---
 if os.path.exists(CONFIG_FILE):
@@ -127,16 +154,21 @@ def udp_start(peer_addr, my_name, my_port):
 
 def sending_messages(sock):
     global peer_ip, peer_port, name
-    """Send messages to peer until /quit"""
     while True:
         msg = input("")  # get message from the console
-        if msg.lower() == "/quit":
-            print("Quitting...")
-            break
         print("\033[F\033[K", end="")
-        print(f"(YOU) {msg}")
-        full_msg = f"[{name}]: {msg}"
-        sock.sendto(full_msg.encode(), (peer_ip, peer_port))
+        if not msg.startswith('/'):
+            print(f"(YOU) {msg}")
+            full_msg = f"[{name}]: {msg}"
+            sock.sendto(full_msg.encode(), (peer_ip, peer_port))
+        else:
+            parts = msg[1:].split()  # removes '/' and separates
+            cmd = parts[0].lower()  # command name
+            args = parts[1:]  # command-line arguments
+            if cmd in commands:
+                commands[cmd](sock, *args)  # call the function
+            else:
+                print(f"Unknown command: {cmd}")
 
 
 def get_server_info():
@@ -154,20 +186,20 @@ def get_server_info():
 
         while True:
             if choice == "0":
-                server_url = config["server_url"]+'/ws'
+                server_url = config["server_url"]
                 break
             elif choice == '00':
                 print(f'Saved URL: {config["server_url"]}')
                 choice = input("Enter number: ").strip()
             elif choice == "1":
                 # Change server IP
-                server_url = input("Enter URL of your Signaling Server: ").strip()+'/ws'
-                config["server_url"] = server_url[:-3]
+                server_url = input("Enter URL of your Signaling Server: ").strip()
+                config["server_url"] = server_url
                 save_config()
                 break
     else:
         # No saved server, ask directly
-        server_url = input("Enter URL of your Signaling Server: ").strip()+'/ws'
+        server_url = input("Enter URL of your Signaling Server: ").strip()
         config["server_url"] = server_url
         save_config()
 
@@ -178,7 +210,7 @@ def generate_session_code(length=6):
 
 def open_connection():
     global public_partner, SERVER_URL, my_port, name
-    SERVER_URL = get_server_info()
+    SERVER_URL = get_server_info()+'/ws'
     name = input("What username do you want to use?\n")
     while True:
         choice = input("Do you want to create a room (0) or join one (1)?\n")
