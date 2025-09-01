@@ -1,0 +1,144 @@
+:root {
+  --bg: #0b1220;
+  --panel: #192133;
+  --text: #e7ecf3;
+  --muted: #a8b3c7;
+  --accent: #7aa2ff;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 800px at 20% 10%, #0f1830 0%, var(--bg) 60%) no-repeat fixed;
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  display: grid;
+  place-items: center;
+  line-height: 1.6;
+}
+
+main {
+  width: min(800px, 92%);
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px;
+  padding: 28px 28px 24px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+  backdrop-filter: blur(4px);
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-size: clamp(22px, 4vw, 30px);
+  letter-spacing: 0.3px;
+}
+
+p {
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: clamp(15px, 2.4vw, 17px);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover { text-decoration: underline; }
+
+footer {
+  margin-top: 16px;
+  font-size: 13px;
+  color: #8ea2c7;
+  opacity: 0.9;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid rgba(122,162,255,0.35);
+  color: var(--accent);
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  margin-bottom: 8px;
+}
+
+.dashed-line {
+    position: absolute;
+    top: 50%;
+
+    left: var(--line-left, auto);
+    right: var(--line-right, auto);
+
+    width: var(--line-width, 19%);
+    border-top: 6px dashed black;
+    transform: translateY(-50%);
+    margin: 0 10%;
+    animation: extendLine var(--line-duration, 0s) forwards;
+}
+
+@keyframes extendLine {
+    from { width: 0; }
+    to { width: var(--line-width, 19%); }
+}
+
+.moving-text {
+    position: absolute;
+    top: var(--top, 50%);
+    color: var(--color, black);
+    font-size: var(--font-size, 70%);
+    font-weight:bold;
+    animation: var(--anim, moveTextL) 2.5s linear infinite;
+    animation-delay: var(--delay, 0s);
+    opacity: 0;
+}
+
+@keyframes moveTextL {
+    0% {
+        left: var(--start, 0%);
+        transform: scale(0);
+        opacity: 0;
+    }
+    30% {
+        left: calc(var(--start, 0%) + 0.3 * (var(--end, 100%) - var(--start, 0%)));
+        transform: scale(1);
+        opacity: 1;
+    }
+    70% {
+        left: calc(var(--start, 0%) + 0.7 * (var(--end, 100%) - var(--start, 0%)));
+        transform: scale(1);
+        opacity: 1;
+    }
+    100% {
+        left: var(--end, 100%);
+        transform: scale(0);
+        opacity: 0;
+    }
+}
+
+@keyframes moveTextR {
+    0% {
+        right: var(--start, 0%);
+        transform: scale(0);
+        opacity: 0;
+    }
+    30% {
+        right: calc(var(--start, 0%) + 0.3 * (var(--end, 100%) - var(--start, 0%)));
+        transform: scale(1);
+        opacity: 1;
+    }
+    70% {
+        right: calc(var(--start, 0%) + 0.7 * (var(--end, 100%) - var(--start, 0%)));
+        transform: scale(1);
+        opacity: 1;
+    }
+    100% {
+        right: var(--end, 100%);
+        transform: scale(0);
+        opacity: 0;
+    }
+}

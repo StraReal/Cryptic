@@ -63,10 +63,9 @@ def udp_listener(sock):
     received = False
     while not connected:
         try:
-            m = sock.recvfrom(1024).decode()
-            print(m)
+            m, addr = sock.recvfrom(1024)
             received = True
-            if 'CONFIRMRECEIVED' in m:
+            if 'CONFIRMRECEIVED' in m.decode():
                 connected = True
         except ConnectionResetError:
             pass
@@ -81,7 +80,7 @@ def udp_listener(sock):
             sock.sendto(b"#PONG", addr)
         elif msg.decode() == "#PONG":
             last_seen = time.time()
-        if not msg.decode().startswith(' '):
+        if not msg.decode().startswith('#'):
             print(msg.decode())
 
 def check_timeout(sock, timeout=10):
@@ -89,7 +88,6 @@ def check_timeout(sock, timeout=10):
     while True:
         time.sleep(1)  # check each second
         sock.sendto(b"#PING", (peer_ip, peer_port))
-        print(time.time() - last_seen)
         if time.time() - last_seen > timeout:
             print("Peer disconnected!")
             sys.exit()

@@ -1,63 +1,17 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <link rel="stylesheet" href="static/website.css">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cryptic – Signaling Server</title>
-  <meta name="description" content="Minimal landing page for the Cryptic signaling server." />
-  <style>
-    :root {
-      --bg: #0b1220;
-      --panel: #121a2b;
-      --text: #e7ecf3;
-      --muted: #a8b3c7;
-      --accent: #7aa2ff;
-    }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      background: radial-gradient(1200px 800px at 20% 10%, #0f1830 0%, var(--bg) 60%) no-repeat fixed;
-      color: var(--text);
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      display: grid;
-      place-items: center;
-      line-height: 1.6;
-    }
-    main {
-      width: min(800px, 92%);
-      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 20px;
-      padding: 28px 28px 24px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
-      backdrop-filter: blur(4px);
-    }
-    h1 {
-      margin: 0 0 10px;
-      font-size: clamp(22px, 4vw, 30px);
-      letter-spacing: 0.3px;
-    }
-    p { margin: 10px 0; color: var(--muted); font-size: clamp(15px, 2.4vw, 17px); }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    footer { margin-top: 16px; font-size: 13px; color: #8ea2c7; opacity: 0.9; }
-    .tag {
-      display: inline-block;
-      padding: 2px 8px;
-      border: 1px solid rgba(122,162,255,0.35);
-      color: var(--accent);
-      border-radius: 999px;
-      font-size: 12px;
-      letter-spacing: 0.3px;
-      margin-bottom: 8px;
-    }
-  </style>
+  <meta name="description" content="Landing page for the Cryptic signaling server." />
 </head>
 <body>
   <main>
-    <div class="tag">Cryptic</div>
-    <h1>Hello visitor!</h1>
+    <a href="https://github.com/StraReal/Cryptic" class="tag">Cryptic</a>
+    <a href="https://github.com/StraReal" class="tag">StraReal (me)</a>
+    <h1>Hello, visitor!</h1>
     <p>This is the domain I use for my signaling server.</p>
     <p>
       This is part of the project at
@@ -67,9 +21,145 @@
     <p>
       What it aims to do is create actually private chatting, but I definitely need help for it since there is no team behind it, just me.
     </p>
+
+    <div id="interactive-section" style="margin-top: 20px; background: var(--panel); padding: 20px; border-radius: 15px;">
+      <h2>How connecting with UDP Hole punching works</h2>
+
+      <div id="main-text" style="color: var(--text); margin-bottom: 15px;">
+        Step 1: The client creates a room, contacting the signaling server and telling it its IP and port.
+      </div>
+
+      <div id="step-controls" style="display: flex; justify-content: space-between;">
+        <button id="prev-btn" style="background: var(--accent); color: var(--text); border: none; padding: 6px 12px; border-radius: 8px; cursor: pointer;">Prev</button>
+        <button id="next-btn" style="background: var(--accent); color: var(--text); border: none; padding: 6px 12px; border-radius: 8px; cursor: pointer;">Next</button>
+      </div>
+    </div>
+        <div id="drawing-area" style="margin-top: 30px; background: white; height: 200px; border-radius: 15px; border: 1px solid #ccc; position: relative;">
+    </div>
+
     <footer>
       <span>Made to protect — self‑hosted via Cloudflare Tunnel</span>
     </footer>
   </main>
+
+  <script>
+    // Passages
+    const steps = [
+      "Step 1: The client creates a room, contacting the signaling server and telling it its IP and port.",
+      "Step 2: The second client asks the signaling server to let it join said room.",
+      "Step 3: The signaling server tells peer A peer B's IP:port and viceversa.",
+      "Step 4: Peer A and peer B start sending each other packets until one gets through, establishing a connection (punching a hole).",
+      "Step 5: A connection is now opened and the two can now chat between them without their messages passing through any server."
+    ];
+    const steps_rect = [
+  // Step 1
+  `
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:50px; left:10%; height:50%; width:auto;">
+    <img src="static/assets/serverlogo.png" alt="Server" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); height:40%; width:auto;">
+    <div class="dashed-line"
+    style="--line-duration: 1s; --line-left: 15%;"></div>
+
+    <div class="moving-text" style="--start: 16%; --end: 40%; --top: 30%">
+    CREATE ABC123<br> 93.184.216.34:4999❯
+
+    </div>
+  `,
+  // Step 2
+  `
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
+    <img src="static/assets/serverlogo.png" alt="Server" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); height:40%; width:auto;">
+
+    <div class="dashed-line"
+    style="--line-left: 15%;"></div>
+
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
+
+    <div class="dashed-line"
+    style="--line-duration: 1s; --line-right: 15%;"></div>
+
+    <div style="position:absolute; color: black; top:20%; left:50%; transform:translate(-50%,-50%);
+              font-size:70%; font-weight:bold;">
+    ABC123:<br> 93.184.216.34:4999</div>
+
+    <div class="moving-text" style="--start: 16%; --end: 40%; --top: 30%; --anim: moveTextR;">
+    &nbsp;&nbsp;JOIN ABC123<br> ❮192.168.1.1:9999
+  `,
+  // Step 3
+  `
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
+    <img src="static/assets/serverlogo.png" alt="Server" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); height:40%; width:auto;">
+    <div style="position:absolute; top:50%; left:15%; width:19%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
+    <div style="position:absolute; top:50%; right:15%; width:19%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
+
+    <div class="moving-text" style="--start: 40%; --end: 16%; --top: 30%; --anim: moveTextR;">
+    PEER 93.184.216.34:4999❯</div>
+    <div class="moving-text" style="--start: 40%; --end: 16%; --top: 30%;">
+    ❮PEER 192.168.1.1:9999
+  `,
+  // Step 4
+  `
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
+
+    <div style="position:absolute; top:50%; left:15%; right:15%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%;">
+    HELLO❯</div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.3s;">
+    HELLO❯</div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.6s;">
+    HELLO❯</div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.9s;">
+    HELLO❯</div>
+
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --anim: moveTextR;">
+    ❮HELLO</div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.4s; --anim: moveTextR;">
+    ❮HELLO</div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.7s; --anim: moveTextR;">
+    ❮HELLO</div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 1s; --anim: moveTextR;">
+    ❮HELLO
+  `,
+  // Step 5
+  `
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
+    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
+    <div style="position:absolute; top:50%; left:15%; right:15%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%;">
+    Hi there!❯</div>
+    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 1.8s; --anim: moveTextR;">
+    ❮Hello!
+  `
+];
+
+    let currentStep = 0;
+
+    const mainText = document.getElementById('main-text');
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const drawingArea = document.getElementById('drawing-area');
+
+    function updateStep() {
+      mainText.textContent = steps[currentStep];
+      prevBtn.disabled = currentStep === 0;
+      nextBtn.disabled = currentStep === steps.length - 1;
+      drawingArea.innerHTML = steps_rect[currentStep];
+    }
+
+    prevBtn.addEventListener('click', () => {
+      if(currentStep > 0) currentStep--;
+      updateStep();
+    });
+
+    nextBtn.addEventListener('click', () => {
+      if(currentStep < steps.length - 1) currentStep++;
+      updateStep();
+    });
+
+    // Initialize visualization
+    updateStep();
+  </script>
+
 </body>
 </html>
