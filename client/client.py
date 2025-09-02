@@ -110,15 +110,6 @@ def udp_listener(sock):
         if not msg.decode().startswith('#'):
             print(msg.decode())
 
-def check_timeout(sock, timeout=10):
-    global last_seen, peer_ip, peer_port
-    while True:
-        time.sleep(1)  # check each second
-        sock.sendto(b"#PING", (peer_ip, peer_port))
-        if time.time() - last_seen > timeout:
-            print("Peer disconnected!")
-            sys.exit()
-
 def udp_start(peer_addr, my_name, my_port):
     global connected, peer_ip, peer_port
     """
@@ -135,7 +126,7 @@ def udp_start(peer_addr, my_name, my_port):
     print(f"[UDP] Listening on {my_port}")
 
     # starts listener on a separate thread
-    t = threading.Thread(target=udp_listener, args=(sock,), daemon=True)
+    t = threading.Thread(target=udp_listener, args=(sock,))
     t.start()
     print('Connecting...')
     i = 0
@@ -151,6 +142,15 @@ def udp_start(peer_addr, my_name, my_port):
         time.sleep(0.5)
     print('Succesfully connected')
     return sock
+
+def check_timeout(sock, timeout=10):
+    global last_seen, peer_ip, peer_port
+    while True:
+        time.sleep(1)  # check each second
+        sock.sendto(b"#PING", (peer_ip, peer_port))
+        if time.time() - last_seen > timeout:
+            print("Peer disconnected!")
+            sys.exit()
 
 def sending_messages(sock):
     global peer_ip, peer_port, name
@@ -235,7 +235,7 @@ def open_connection():
 def main():
     sock = open_connection() # open_connection returns None in case of timeout with SS
     # timeout thread
-    threading.Thread(target=check_timeout, args=(sock, ), daemon=True).start()
+    threading.Thread(target=check_timeout, args=(sock, )).start()
     sending_messages(sock)
 
 if __name__=='__main__':
