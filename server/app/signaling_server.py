@@ -10,7 +10,7 @@ def delete_room(room_code):
     print(f"[SERVER] ROOM_DELETED {room_code}")
 
 BASE_DIR = pathlib.Path(__file__).parent
-INDEX_FILE = BASE_DIR / "website.html"
+INDEX_FILE = BASE_DIR / "index.html"
 
 async def index(request):
     return web.FileResponse(INDEX_FILE)
