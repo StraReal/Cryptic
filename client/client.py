@@ -7,6 +7,7 @@ import sys
 import threading
 import asyncio
 import time
+import stun
 import requests
 from aiohttp import ClientSession, WSMsgType
 import tkinter as tk
@@ -50,28 +51,30 @@ if os.path.exists(CONFIG_FILE):
 else:
     config = {}
 
-try:
-    my_ip = requests.get("https://api.ipify.org").text
-except requests.exceptions.ConnectionError as e:
-    print('Error occurred retrieving IP:', e)
+def get_external_address():
+    nat_type, external_ip, external_port = stun.get_ip_info(stun_host="stun.l.google.com", stun_port=19302)
+    print("NAT Type:", nat_type)
+    print("External IP:", external_ip)
+    print("External Port:", external_port)
+    return external_ip, external_port
+
+my_ip, my_port = get_external_address()
+
 
 def save_config():
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
 
 async def signaling_client(cmd, roomcode, url, username):
-    global my_port
     async with ClientSession() as session:
         async with session.ws_connect(url) as ws:
-            await ws.send_str(f"{cmd} room{roomcode} {username} {my_ip}")
+            await ws.send_str(f"{cmd} room{roomcode} {username} {my_ip}:{my_port}")
 
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     if msg.data.startswith("ROOM_CREATED"):
-                        my_port = msg.data.split(" ")[2].split(':')[1]
                         print(f"Room {roomcode} created")
                     elif msg.data.startswith("JOIN_ROOM"):
-                        my_port = msg.data.split(" ")[2].split(':')[1]
                         print(f"Room {roomcode} exists. Joining...")
                     elif msg.data.startswith("PEER"):
                         # here the server gave you the ip:port of the other peer
