@@ -1,18 +1,38 @@
-This project allows people to directly connect without exchanging messages by making them pass through a centralized server using UDP Hole Punching, establishing a direct P2P connection.
+# Cryptic
 
-To do this you need a signaling server (for which the code is already in the repo); it doesn't receive the messages sent by the users but just helps establish a connection (look into UDP Hole Punching to understand what it's doing)
+Cryptic is a peer-to-peer (P2P) instant messaging application built with privacy as a core principle. Unlike mainstream chat apps that rely on central servers to handle messages, Cryptic enables direct communication between users.
 
-The users can then connect by exchanging a 6-char room code, which can either need a password or not.
+---
 
-I'll probably make a signaling server available to anyone to use, but until then, and even then for your extra safety, you'll need to have a signaling server of your own, which can then be used by as many people as you want, all they'll need is its public IP.
+## Project Overview
 
-To be able to chat, run the chat.py script and enter the IP of the signaling server you'll be using.
-Then you can create a room or join one. 
+Cryptic is designed to be an actually private chatting platform. Messages are sent directly between peers, without passing through a central server. A lightweight signaling server is used only to facilitate the initial connection. This architecture allows users to communicate securely while minimizing potential points of surveillance or data collection.
 
-I was thinking of creating accounts, but that goes against the idea of a decentralized chatting service.
+Cryptic is open source and fully self-hostable, making it suitable for anyone who values privacy and wants full control over their communication infrastructure.
 
-Check this website out, which you can also use as signaling server: https://signalingserverdomain.download
+---
 
-There isn't a team behind this, so I have to rely on people to keep this project going, but I would gladly form a team if anyone was up for it. My discord is in my account.
+## Technical Details
 
-Each room has a life-span of 1 hour. It works this way because checking if a room is still open would mean knowing how long two people have been chatting for, and rooms can't be up forever.
+- **Peer-to-peer messaging**: Once a connection is established, all messages travel directly between clients.  
+- **WebRTC and UDP Hole Punching**: Cryptic uses WebRTC to establish P2P connections even when users are behind NATs. UDP hole punching allows peers to open direct communication channels through firewalls and NAT routers.  
+- **Signaling Server**: The signaling server is only used to exchange connection information between peers. Messages never pass through it. You can use the provided public server or host your own.  
+
+---
+
+## Security & Modifications
+
+- Cryptic mitigates the risks of modified clients, but it cannot enforce rules on modified servers.  
+- Anyone can use a modified client or connect to a signaling server other than the publicly available one(s).  
+- Full self-hosting is supported for users who want complete control over both client and server.  
+
+---
+
+## Getting Started
+
+### Using the Client
+
+1. Install the dependencies:
+
+```bash
+pip install -r client/requirements.txt
