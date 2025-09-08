@@ -36,3 +36,25 @@ Cryptic is open source and fully self-hostable, making it suitable for anyone wh
 
 ```bash
 pip install -r client/requirements.txt
+```
+Run the client:
+```bash
+python client.py
+```
+Choose any display name and either create or join a room using a 6-character room code.
+
+Hosting a Signaling Server
+Use the Dockerfile in the server/ folder to build and run your own signaling server.
+
+The server should be ready to facilitate P2P connections immediately.
+
+Optionally, you can use the public signaling server at https://signalingserverdomain.download/ if you don’t want to host your own.
+
+Links
+Join our Discord server: https://discord.gg/tuX9hkvFC2
+
+Public signaling server: https://signalingserverdomain.download/
+
+
+---
+
