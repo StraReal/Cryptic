@@ -2,8 +2,8 @@ import asyncio
 import copy
 from aiohttp import web
 import pathlib
-from User import Users
-from User import userencoder
+from user import Users
+from user import userencoder
 import json
 
 # rooms is a hashtable keeping track of all the room ids and the client's that are connected to this room
