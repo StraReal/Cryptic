@@ -1,7 +1,12 @@
 import asyncio
+import copy
 from aiohttp import web
 import pathlib
+from User import Users
+from User import userencoder
+import json
 
+# rooms is a hashtable keeping track of all the room ids and the client's that are connected to this room
 # rooms = { room_code: { 'peers': { username: ws }, 'saved': bool } }
 rooms = {}
 
@@ -12,7 +17,7 @@ def delete_room(room_code):
 BASE_DIR = pathlib.Path(__file__).parent
 INDEX_FILE = BASE_DIR / "index.html"
 
-async def index(request):
+async def index(_):
     return web.FileResponse(INDEX_FILE)
 
 async def remove_room_after_timeout(room_code, timeout=3600):
@@ -23,95 +28,43 @@ async def remove_room_after_timeout(room_code, timeout=3600):
         print(f"[SERVER] ROOM_TIMEOUT {room_code}")
         delete_room(room_code)
 
-async def websocket_handler(request):
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
 
-    peername = request.transport.get_extra_info('peername')
-    if peername is None:
-        peer_port = None
+async def new_room(request):
+    """
+        Method to create a new room with the given code if that code is not already taken.
+        If a room already exists with the same code then return 'Not Allowed' for the request.
+    """
+    peerip=request.remote
+    room_name=request.query['room-name']
+    client_name=request.query['name']
+    
+    if room_name not in rooms.keys():
+        rooms[room_name]=[Users(client_name, peerip)]
+        return web.Response(status=200)
     else:
-        peer_port = peername[1]
+        return web.Response(status=406)
 
-    username = None
-    room_code = None
+async def join_room(request):
+    """
+        Method to check if there is an existing room with the given room code. If the room with the given code exists then returns 
+        the ip and username of all the other users in the room.
+    """
+    peerip=request.remote
+    room_name=request.query['room-name']
+    client_name=request.query['name']
 
-    try:
-        async for msg in ws:
-            if msg.type == web.WSMsgType.TEXT:
-                data = msg.data.strip()
-
-                parts = data.split(" ")
-                cmd = parts[0].upper()
-                peer_ip = parts[3]
-                peer_addr = f'{peer_ip}:{peer_port}'
-                print(f"[{peer_addr}] {data}")
-
-                if cmd == "CREATE" and len(parts) >= 3:
-                    room_code, username = parts[1], parts[2].replace(' ','_')
-                    if room_code in rooms:
-                        msg = f"ROOM_TAKEN {room_code} {peer_addr}"
-                        await ws.send_str(msg)
-                        print(f'[SERVER] {msg}')
-                    else:
-                        rooms[room_code] = {"peers": {username: (ws, peer_addr)}, "saved": False}
-                        msg = f"ROOM_CREATED {room_code} {peer_addr}"
-                        await ws.send_str(msg)
-                        print(f'[SERVER] {msg}')
-                        # auto-remove after 1h
-                        asyncio.create_task(remove_room_after_timeout(room_code))
-
-                elif cmd == "JOIN" and len(parts) >= 3:
-                    room_code, username = parts[1], parts[2]
-                    if room_code not in rooms:
-                        msg = f"ROOM_INEXISTENT {room_code} {peer_addr}"
-                        await ws.send_str(msg)
-                        print(f'[SERVER] {msg}')
-                    else:
-                        room = rooms[room_code]
-                        room["peers"][username] = (ws, peer_addr)
-                        msg = f"JOIN_ROOM {room_code} {peer_addr}"
-                        await ws.send_str(msg)
-                        print(f'[SERVER] {msg}')
-
-                        # if atleast 2 people are in it, mark the room as "saved": it's up for deletion in 1 hour
-                        if len(room["peers"]) >= 2:
-                            room["saved"] = True
-
-                        # notify the peers
-                        if len(room["peers"]) >= 2:
-                            peers = list(room["peers"].items())
-                            for i, (uname, inf) in enumerate(peers):
-                                other_uname, other_addr = peers[1 - i]
-                                sock, my_addr = inf
-                                other_addr = other_addr[1]
-                                other_ip, other_port = other_addr.split(":")
-                                my_ip, my_port = my_addr.split(":")
-                                msg = f"PEER {other_uname} {other_ip if other_ip!=my_ip else '127.0.0.1'}:{other_port}"
-                                await sock.send_str(msg)
-                                print(f'[SERVER] {msg}')
-
-                else:
-                    await ws.send_str("ERROR invalid command")
-
-    finally:
-        # clean-up if the host disconnects
-        print(f"[SERVER] Peer {peer_addr} disconnected")
-        if room_code and username:
-            room = rooms.get(room_code)
-            if room:
-                if username in room["peers"] and not room["saved"]:
-                    del room["peers"][username]
-                # if the room isn't "saved", delete it
-                if not room["saved"] and not room["peers"]:
-                    delete_room(room_code)
-
-    return ws
-
-app = web.Application()
-app.router.add_get("/", index)          # Homepage → website.html
-app.router.add_get("/ws", websocket_handler)          #/ws lead to WebSocket
-app.router.add_static('/static/', path='static', name='static')
+    if room_name in rooms.keys():
+        existing_users=copy.deepcopy(rooms[room_name]) ## take the list of other existing users in the same room
+        rooms[room_name].append(Users(client_name, peerip))
+        return web.Response(body=json.dumps(existing_users, default=userencoder, indent=2),status=200, content_type='application/json')
+    else:
+        return web.Response(status=404)
 
 if __name__ == "__main__":
+    app = web.Application()
+    app.router.add_get('/', index)   # Homepage → website.html
+    app.router.add_static('/static/', path='static', name='static')
+    app.router.add_get('/room/new', new_room)
+    app.router.add_get('/room/join', join_room)
     web.run_app(app, host="0.0.0.0", port=5000)
+
