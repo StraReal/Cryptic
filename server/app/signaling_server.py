@@ -76,11 +76,60 @@ async def join_room(request):
     else:
         return web.Response(status=404)
 
+async def lockroom(request):
+    """
+        Locks the room so no more clients can connect to the room.
+    """
+    peerip=request.remote
+    room_name=request.query['room-name']
+    client_name=request.query['name']
+    newuser=Users(client_name, peerip)
+
+    if rooms[room_name].lockroom(newuser):
+        return web.Response(status=200)
+    else:
+        return web.Response(status=406)
+
+
+async def unlockroom(request):
+    """
+        Unlocks the room so no more clients can connect to the room.
+    """
+    peerip=request.remote
+    room_name=request.query['room-name']
+    client_name=request.query['name']
+    newuser=Users(client_name, peerip)
+
+
+    if rooms[room_name].lockroom(newuser):
+        return web.Response(status=200)
+    else:
+        return web.Response(status=406)
+
+async def change_password(request):
+    """
+        Change password to enter a room. Only acceptable from the cretor of the room.
+        If the previous password matches with the provided password only then changes the password for this room.
+    """
+    peerip=request.remote
+    room_name=request.query['room-name']
+    client_name=request.query['name']
+    room_pass=request.query['pass'] 
+    new_pass=request.query['new_pass']
+    newuser=Users(client_name, peerip)
+
+    if rooms[room_name].changepassword(newuser, room_pass, new_pass):
+        return web.Response(body=new_pass,status=200, content_type='text/plain')
+    return web.Response(status=406)
+
 if __name__ == "__main__":
     app = web.Application()
     app.router.add_get('/', index)   # Homepage → website.html
     app.router.add_static('/static/', path='static', name='static')
     app.router.add_get('/room/new', new_room)
     app.router.add_get('/room/join', join_room)
+    app.router.add_get('/room/lock', lockroom)
+    app.router.add_get('/room/unlock', unlockroom)
+    app.router.add_get('/room/change/password', change_password)
     web.run_app(app, host="0.0.0.0", port=5000)
 
