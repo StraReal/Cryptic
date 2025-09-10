@@ -4,13 +4,15 @@ from aiohttp import web
 import pathlib
 from user import Users
 from user import userencoder
+from rooms import Rooms
+from typing import Dict
 import json
 
 # rooms is a hashtable keeping track of all the room ids and the client's that are connected to this room
-# rooms = { room_code: { 'peers': { username: ws }, 'saved': bool } }
-rooms = {}
+# rooms = { room_code: {Rooms} }
+rooms: Dict[str, Rooms]={}
 
-def delete_room(room_code):
+def delete_room(room_code:str):
     del rooms[room_code]
     print(f"[SERVER] ROOM_DELETED {room_code}")
 
@@ -37,12 +39,14 @@ async def new_room(request):
     peerip=request.remote
     room_name=request.query['room-name']
     client_name=request.query['name']
-    
+    room_pass=request.query['pass']
+    owneruser= Users(client_name, peerip)
+
     if room_name not in rooms.keys():
-        rooms[room_name]=[Users(client_name, peerip)]
+        rooms[room_name]=Rooms(room_name, room_pass, owneruser)
         return web.Response(status=200)
     else:
-        return web.Response(status=406)
+        return web.Response(body="Room Name not available in this server",status=406, content_type="text/plain")
 
 async def join_room(request):
     """
@@ -52,11 +56,23 @@ async def join_room(request):
     peerip=request.remote
     room_name=request.query['room-name']
     client_name=request.query['name']
+    room_pass=request.query['pass'] 
+    newuser=Users(client_name, peerip)
 
     if room_name in rooms.keys():
         existing_users=copy.deepcopy(rooms[room_name]) ## take the list of other existing users in the same room
-        rooms[room_name].append(Users(client_name, peerip))
-        return web.Response(body=json.dumps(existing_users, default=userencoder, indent=2),status=200, content_type='application/json')
+        match rooms[room_name].addclient(newuser, room_pass):
+            case 1: 
+                return web.Response(body=json.dumps(existing_users, default=userencoder, indent=2),status=200, content_type='application/json')
+            case -1:
+                return web.Response(body="[Error]:Username already taken", status=409, content_type='text/plain')
+            case -2:
+                return web.Response(body="[Error]:Same ip as another user", status=409, content_type='text/plain')
+            case -3:
+                return web.Response(body="[Error]:Password not valid", status=403, content_type='text/plain')
+            case -4:
+                return web.Response(body="[Error]:No longer accepting new users in the room", status=406, content_type='text/plain')
+        return web.Response(status=500)
     else:
         return web.Response(status=404)
 
