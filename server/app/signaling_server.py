@@ -44,7 +44,10 @@ async def new_room(request):
 
     if room_name not in rooms.keys():
         rooms[room_name]=Rooms(room_name, room_pass, owneruser)
-        return web.Response(status=200)
+        while True: # Wait until there is another user in the same room and then return the list of the other users' ip and username
+            if rooms[room_name].getclientnos()>=2:
+                break
+        return web.Response(body=json.dumps(rooms[room_name]._clients[1:], default=userencoder), status=200, content_type='application/json')
     else:
         return web.Response(body="Room Name not available in this server",status=406, content_type="text/plain")
 
@@ -60,9 +63,9 @@ async def join_room(request):
     newuser=Users(client_name, peerip)
 
     if room_name in rooms.keys():
-        existing_users=copy.deepcopy(rooms[room_name]) ## take the list of other existing users in the same room
+        existing_users=copy.deepcopy(rooms[room_name]._clients) ## take the list of other existing users in the same room
         match rooms[room_name].addclient(newuser, room_pass):
-            case 1: 
+            case 1:
                 return web.Response(body=json.dumps(existing_users, default=userencoder, indent=2),status=200, content_type='application/json')
             case -1:
                 return web.Response(body="[Error]:Username already taken", status=409, content_type='text/plain')
@@ -122,6 +125,16 @@ async def change_password(request):
         return web.Response(body=new_pass,status=200, content_type='text/plain')
     return web.Response(status=406)
 
+async def leave_room(request):
+    """
+        Removes the specific user(identified by their ip) from the room
+    """
+    peerip=request.remote
+    room_name=request.query['room-name']
+    
+    rooms[room_name].dropclient(peerip)
+    return web.Response(status=200)
+
 if __name__ == "__main__":
     app = web.Application()
     app.router.add_get('/', index)   # Homepage → website.html
@@ -131,5 +144,6 @@ if __name__ == "__main__":
     app.router.add_get('/room/lock', lockroom)
     app.router.add_get('/room/unlock', unlockroom)
     app.router.add_get('/room/change/password', change_password)
+    app.router.add_get('/room/leave', leave_room)
     web.run_app(app, host="0.0.0.0", port=5000)
 

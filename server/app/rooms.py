@@ -1,4 +1,5 @@
 from user import Users
+from asyncio import Lock
 
 class Rooms:
     def __init__ (self, code, password, headuser: Users):
@@ -9,6 +10,7 @@ class Rooms:
         self._clients.append(headuser)
         self._count=0
         self._locked=False
+        self._lock=Lock() ## mutex lock primitive for shared state during async functions
 
     def addclient(self, newuser: Users, provided_password: str) -> int:
         """
@@ -68,4 +70,18 @@ class Rooms:
             self._password=new_password
             return True 
         return False
-    
+
+
+    def dropclient(self, peerip:str):
+        """
+            Drop a specific user from the room identified by their ip address
+        """
+        idx=-1
+        for i, client  in enumerate(self._clients):
+            if client.getipaddr()==peerip:
+                idx=i
+        del self._clients[idx]
+
+
+    def getclientnos(self):
+        return len(self._clients)
