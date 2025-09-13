@@ -44,10 +44,7 @@ async def new_room(request):
 
     if room_name not in rooms.keys():
         rooms[room_name]=Rooms(room_name, room_pass, owneruser)
-        while True: # Wait until there is another user in the same room and then return the list of the other users' ip and username
-            if rooms[room_name].getclientnos()>=2:
-                break
-        return web.Response(body=json.dumps(rooms[room_name]._clients[1:], default=userencoder), status=200, content_type='application/json')
+        return web.Response(status=200)
     else:
         return web.Response(body="Room Name not available in this server",status=406, content_type="text/plain")
 
@@ -63,10 +60,12 @@ async def join_room(request):
     newuser=Users(client_name, peerip)
 
     if room_name in rooms.keys():
-        existing_users=copy.deepcopy(rooms[room_name]._clients) ## take the list of other existing users in the same room
         match rooms[room_name].addclient(newuser, room_pass):
             case 1:
-                return web.Response(body=json.dumps(existing_users, default=userencoder, indent=2),status=200, content_type='application/json')
+                print("Total clients: ", rooms[room_name].getclientnos())
+                if rooms[room_name].getclientnos() <2:
+                    return web.Response(body="[Warn]:There are no other user in the room.", status= 425 , content_type="text/plain")
+                return web.Response(body=json.dumps(rooms[room_name].getotherclients(peerip), default=userencoder, indent=2),status=200, content_type='application/json')
             case -1:
                 return web.Response(body="[Error]:Username already taken", status=409, content_type='text/plain')
             case -2:

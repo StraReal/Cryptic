@@ -25,15 +25,15 @@ class Rooms:
         """
         if self._locked==True: #If the room is locked return without adding the newclient to the room
             return -4
+        if self._password!=provided_password:
+            return -3
         for i in self._clients:
-            if i.getname()==newuser.getname(): #User with the same username exists in the room
+            if i.getname()==newuser.getname():
                 return -1
-            elif i.getipaddr()==newuser.getipaddr(): #User from the same ipaddr exists in the room
+            elif i.getipaddr()==newuser.getipaddr():
                 return -2
-        if self._password==provided_password:
-            self._clients.append(newuser)
-            return 0
-        return -3
+        self._clients.append(newuser)
+        return 1
 
     def lockroom(self, requesteduser: Users)->bool:
         """
@@ -85,3 +85,11 @@ class Rooms:
 
     def getclientnos(self):
         return len(self._clients)
+
+    def getotherclients(self, peerip:str):
+        """
+            Get all the client info except the your ownself
+        """
+        for i,val in enumerate(self._clients):
+            if val.getipaddr()==peerip:
+                return self._clients[0:i]+self._clients[i+1:]
