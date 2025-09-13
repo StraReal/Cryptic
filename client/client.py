@@ -7,7 +7,8 @@ import sys
 import threading
 import asyncio
 import time
-import stun
+from socket import socket
+
 import requests
 from aiohttp import ClientSession, WSMsgType
 import tkinter as tk
@@ -51,40 +52,48 @@ if os.path.exists(CONFIG_FILE):
 else:
     config = {}
 
-def get_external_address():
-    nat_type, external_ip, external_port = stun.get_ip_info(stun_host="stun.l.google.com", stun_port=19302)
-    print("NAT Type:", nat_type)
-    print("External IP:", external_ip)
-    print("External Port:", external_port)
-    return external_ip, external_port
-
-my_ip, my_port = get_external_address()
-
-
 def save_config():
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
 
-async def signaling_client(cmd, roomcode, url, username):
+async def create_room(server_url, room_code: str, room_name: str, username: str, password: str) -> socket | bool:
+    """
+    Ritorna True se la stanza è stata creata con successo.
+    """
+    params = {
+        "room-code": room_code,
+        "room-name": room_name,
+        "name": username,
+        "pass": password
+    }
     async with ClientSession() as session:
-        async with session.ws_connect(url) as ws:
-            await ws.send_str(f"{cmd} room{roomcode} {username} {my_ip}:{my_port}")
+        async with session.get(f"{server_url}/room/new", params=params) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                print(data)
+                print(f"Room '{room_name}' with code {room_code} created!")
+                peer_name, peer_addr = ('Peer', '127.0.0.1')
+                sock = udp_start(peer_addr.split(":"), username, my_port)
+                return sock
+            else:
+                text = await resp.text()
+                print(f"Error creating room: {resp.status} {text}")
+                return False
 
-            async for msg in ws:
-                if msg.type == WSMsgType.TEXT:
-                    if msg.data.startswith("ROOM_CREATED"):
-                        print(f"Room {roomcode} created")
-                    elif msg.data.startswith("JOIN_ROOM"):
-                        print(f"Room {roomcode} exists. Joining...")
-                    elif msg.data.startswith("PEER"):
-                        # here the server gave you the ip:port of the other peer
-                        _, peer_name, peer_addr = msg.data.split(" ", 2)
-                        sock = udp_start(peer_addr.split(":"), username, my_port)
-                        return sock
-                    elif msg.data.startswith("ROOM_INEXISTENT"):
-                        # here the server gave you the ip:port of the other peer
-                        print(f"Room {roomcode} doesn't exist.")
-                        return 1
+async def join_room(server_url, room_code: str, username: str, password: str) -> socket | None:
+    params = {"room-code": room_code, "name": username, "pass": password}
+    async with ClientSession() as session:
+        async with session.get(f"{server_url}/room/join", params=params) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                print(data)
+                print(f"Successfully joined room {room_code}")
+                peer_name, peer_addr = ('Peer', '127.0.0.1')
+                sock = udp_start(peer_addr.split(":"), username, my_port)
+                return sock
+            text = await resp.text()
+            print(f"Error joining room: {resp.status} {text}")
+            return None
 
 def udp_listener(sock):
     global connected, received, last_seen
@@ -213,7 +222,7 @@ def generate_session_code(length=6):
 
 def open_connection():
     global public_partner, SERVER_URL, my_port, name
-    SERVER_URL = get_server_info()+'/ws'
+    SERVER_URL = get_server_info()
     name = input("What username do you want to use?\n")
     while True:
         choice = input("Do you want to create a room (0) or join one (1)?\n")
@@ -222,13 +231,16 @@ def open_connection():
             print("Session code:", session_code)
             sock = None
             while sock is None:
-                sock = asyncio.run(signaling_client('CREATE', session_code, SERVER_URL, name))
+                sock = asyncio.run(
+                    create_room(SERVER_URL, session_code,
+                                room_name='Roomie', user_name=name, password='')
+                )
             return sock
         elif choice == '1':
             session_code = input("Enter room code:\n")
             sock = None
             while sock is None:
-                sock = asyncio.run(signaling_client('JOIN', session_code, SERVER_URL, name))
+                print(create_room(SERVER_URL, session_code, room_name='Roomie', user_name=name, password=''))
                 if sock == 1:
                     break
             if sock == 1:

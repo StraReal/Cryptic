@@ -12,6 +12,14 @@ import json
 # rooms = { room_code: {Rooms} }
 rooms: Dict[str, Rooms]={}
 
+@web.middleware
+async def log_status(request, handler):
+    # chiama l'handler originale
+    response = await handler(request)
+    # stampa lo status di qualunque web.Response
+    print(f"[SERVER] HTTP {request.method} {request.path} -> {response.status}")
+    return response
+
 def delete_room(room_code:str):
     del rooms[room_code]
     print(f"[SERVER] ROOM_DELETED {room_code}")
@@ -37,13 +45,13 @@ async def new_room(request):
         If a room already exists with the same code then return 'Not Allowed' for the request.
     """
     peerip=request.remote
-    room_name=request.query['room-name']
+    room_code=request.query['room-code']
     client_name=request.query['name']
     room_pass=request.query['pass']
     owneruser= Users(client_name, peerip)
 
-    if room_name not in rooms.keys():
-        rooms[room_name]=Rooms(room_name, room_pass, owneruser)
+    if room_code not in rooms.keys():
+        rooms[room_code]=Rooms(room_code, room_pass, owneruser)
         return web.Response(status=200)
     else:
         return web.Response(body="Room Name not available in this server",status=406, content_type="text/plain")
@@ -54,18 +62,18 @@ async def join_room(request):
         the ip and username of all the other users in the room.
     """
     peerip=request.remote
-    room_name=request.query['room-name']
+    room_code=request.query['room-code']
     client_name=request.query['name']
     room_pass=request.query['pass'] 
     newuser=Users(client_name, peerip)
 
-    if room_name in rooms.keys():
-        match rooms[room_name].addclient(newuser, room_pass):
+    if room_code in rooms.keys():
+        match rooms[room_code].addclient(newuser, room_pass):
             case 1:
-                print("Total clients: ", rooms[room_name].getclientnos())
-                if rooms[room_name].getclientnos() <2:
+                print("Total clients: ", rooms[room_code].getclientnos())
+                if rooms[room_code].getclientnos() <2:
                     return web.Response(body="[Warn]:There are no other user in the room.", status= 425 , content_type="text/plain")
-                return web.Response(body=json.dumps(rooms[room_name].getotherclients(peerip), default=userencoder, indent=2),status=200, content_type='application/json')
+                return web.Response(body=json.dumps(rooms[room_code].getotherclients(peerip), default=userencoder, indent=2),status=200, content_type='application/json')
             case -1:
                 return web.Response(body="[Error]:Username already taken", status=409, content_type='text/plain')
             case -2:
@@ -83,11 +91,11 @@ async def lockroom(request):
         Locks the room so no more clients can connect to the room.
     """
     peerip=request.remote
-    room_name=request.query['room-name']
+    room_code=request.query['room-code']
     client_name=request.query['name']
     newuser=Users(client_name, peerip)
 
-    if rooms[room_name].lockroom(newuser):
+    if rooms[room_code].lockroom(newuser):
         return web.Response(status=200)
     else:
         return web.Response(status=406)
@@ -98,12 +106,12 @@ async def unlockroom(request):
         Unlocks the room so no more clients can connect to the room.
     """
     peerip=request.remote
-    room_name=request.query['room-name']
+    room_code=request.query['room-code']
     client_name=request.query['name']
     newuser=Users(client_name, peerip)
 
 
-    if rooms[room_name].lockroom(newuser):
+    if rooms[room_code].unlockroom(newuser):
         return web.Response(status=200)
     else:
         return web.Response(status=406)
@@ -114,13 +122,13 @@ async def change_password(request):
         If the previous password matches with the provided password only then changes the password for this room.
     """
     peerip=request.remote
-    room_name=request.query['room-name']
+    room_code=request.query['room-code']
     client_name=request.query['name']
     room_pass=request.query['pass'] 
     new_pass=request.query['new_pass']
     newuser=Users(client_name, peerip)
 
-    if rooms[room_name].changepassword(newuser, room_pass, new_pass):
+    if rooms[room_code].changepassword(newuser, room_pass, new_pass):
         return web.Response(body=new_pass,status=200, content_type='text/plain')
     return web.Response(status=406)
 
@@ -129,13 +137,13 @@ async def leave_room(request):
         Removes the specific user(identified by their ip) from the room
     """
     peerip=request.remote
-    room_name=request.query['room-name']
+    room_code=request.query['room-code']
     
-    rooms[room_name].dropclient(peerip)
+    rooms[room_code].dropclient(peerip)
     return web.Response(status=200)
 
 if __name__ == "__main__":
-    app = web.Application()
+    app = web.Application(middlewares=[log_status])
     app.router.add_get('/', index)   # Homepage → website.html
     app.router.add_static('/static/', path='static', name='static')
     app.router.add_get('/room/new', new_room)
