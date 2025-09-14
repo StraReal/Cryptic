@@ -9,267 +9,254 @@ import time
 import requests
 import tkinter as tk
 from tkinter import filedialog
+import stun  # STUN for public IP detection
 
-# public_key, private_key = rsa.newkeys(1024)   # not used
-public_partner = None
+class CrypticClient:
+    CONFIG_FILE = "config.json"
 
-CONFIG_FILE = "config.json"
+    def __init__(self):
+        # Peer state
+        self.public_partner = None
+        self.peer_ip = None
+        self.peer_port = None
+        self.my_port = None
+        self.connected = False
+        self.received = False
+        self.last_seen = None
+        self.name = None
+        self.config = {}
 
-peer_ip = None
-peer_port = None
-my_port = None
-connected = False
-received = False
-last_seen = None
-name = None
+        # Load config
+        if os.path.exists(self.CONFIG_FILE):
+            with open(self.CONFIG_FILE, "r") as f:
+                self.config = json.load(f)
 
-def cmd_sendfile(sock, *args):
-    """Open a file dialog and send the selected file to the peer over UDP."""
-    root = tk.Tk()
-    root.withdraw()
-    path = filedialog.askopenfilename(title="Select a file")
-    root.destroy()
-    try:
-        with open(path, "rb") as f:
-            data = f.read()
-        sock.sendto(data, (peer_ip, peer_port))
-    except Exception as e:
-        print(f"Couldn't send file: {e}")
+        # Retrieve public IP using STUN
+        nat_type, external_ip, external_port = stun.get_ip_info()
+        self.my_ip = external_ip
+        self.my_port = external_port  # default port suggested by NAT
+        print(f"[STUN] Public IP detected: {self.my_ip}, External Port: {self.my_port}, NAT type: {nat_type}")
 
-def cmd_quit(*args):
-    """Exit the program."""
-    print("Quitting...")
-    sys.exit()
+        # Commands
+        self.commands = {
+            "sendfile": self.cmd_sendfile,
+            "quit": self.cmd_quit,
+        }
 
-commands = {
-    "sendfile": cmd_sendfile,
-    "quit": cmd_quit,
-}
+    # ---------- Config ----------
+    def save_config(self):
+        with open(self.CONFIG_FILE, "w") as f:
+            json.dump(self.config, f, indent=4)
 
-# --- Load existing config ---
-if os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, "r") as f:
-        config = json.load(f)
-else:
-    config = {}
-
-try:
-    my_ip = requests.get("https://api.ipify.org").text
-except requests.exceptions.ConnectionError as e:
-    print('Error occurred retrieving IP:', e)
-    sys.exit(1)
-
-def save_config():
-    """Save the current configuration to disk."""
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=4)
-
-def signaling_client(cmd, roomcode, url, username):
-    """
-    Replaces the old WebSocket signaling with HTTP requests.
-    It creates or joins a room and retrieves peer info if available.
-    """
-    global my_port
-
-    if cmd.upper() == "CREATE":
-        r = requests.get(
-            url + "/room/new",
-            params={"room_code": roomcode, "username": username, "peer_ip": my_ip}
-        )
-        if r.status_code == 200:
-            # Server returns status string with peer address in it, same parsing as before
-            my_port = r.json()["status"].split(" ")[2].split(":")[1]
-            print(f"Room {roomcode} created")
-            # Wait for a peer to join before returning socket
-            while True:
-                time.sleep(2)
-                rr = requests.get(url + "/rooms")
-                rooms = rr.json()
-                if roomcode in rooms and len(rooms[roomcode]["peers"]) >= 2:
-                    # Someone joined, get their address
-                    rr2 = requests.get(
-                        url + "/room/join",
-                        params={"room_code": roomcode, "username": username, "peer_ip": my_ip}
-                    )
-                    data = rr2.json()
-                    for uname, addr in data["peers"].items():
-                        if uname != username:
-                            sock = udp_start(addr.split(":"), username, my_port)
-                            return sock
-        else:
-            print("Error creating room:", r.text)
-            return 1
-
-    elif cmd.upper() == "JOIN":
-        r = requests.get(
-            url + "/room/join",
-            params={"room_code": roomcode, "username": username, "peer_ip": my_ip}
-        )
-        if r.status_code == 404:
-            print(f"Room {roomcode} doesn't exist.")
-            return 1
-        if r.status_code == 200:
-            my_port = r.json()["status"].split(" ")[2].split(":")[1]
-            print(f"Room {roomcode} exists. Joining...")
-            peers = r.json()["peers"]
-            for uname, addr in peers.items():
-                if uname != username:
-                    sock = udp_start(addr.split(":"), username, my_port)
-                    return sock
-        else:
-            print("Error joining room:", r.text)
-            return 1
-
-def udp_listener(sock):
-    """Listens for incoming UDP packets and prints them."""
-    global connected, received, last_seen
-    connected = False
-    received = False
-    while not connected:
+    # ---------- Commands ----------
+    def cmd_sendfile(self, sock, *args):
+        root = tk.Tk()
+        root.withdraw()
+        path = filedialog.askopenfilename(title="Select a file")
+        root.destroy()
         try:
-            m, addr = sock.recvfrom(1024)
-            received = True
-            if 'CONFIRMRECEIVED' in m.decode():
-                connected = True
-        except ConnectionResetError:
-            pass
-    last_seen = time.time()
-    while True:
-        try:
-            msg, addr = sock.recvfrom(1024)
-        except ConnectionResetError:
-            print("Peer disconnected!")
-            sys.exit()
-        if msg.decode() == "#PING":
-            sock.sendto(b"#PONG", addr)
-        elif msg.decode() == "#PONG":
-            last_seen = time.time()
-        if not msg.decode().startswith('#'):
-            print(msg.decode())
+            with open(path, "rb") as f:
+                data = f.read()
+            sock.sendto(data, (self.peer_ip, self.peer_port))
+        except Exception as e:
+            print(f"Couldn't send file: {e}")
 
-def check_timeout(sock, timeout=10):
-    """Send PING and exit if peer doesn't respond within timeout seconds."""
-    global last_seen, peer_ip, peer_port
-    while True:
-        time.sleep(1)
-        sock.sendto(b"#PING", (peer_ip, peer_port))
-        if time.time() - last_seen > timeout:
-            print("Peer disconnected!")
-            sys.exit()
+    def cmd_quit(self, *args):
+        print("Quitting...")
+        sys.exit()
 
-def udp_start(peer_addr, my_name, my_port):
-    """
-    Start the UDP handshake with the peer.
-    peer_addr: list [ip, port]
-    my_name: local peer name
-    """
-    global connected, peer_ip, peer_port
-    peer_ip, peer_port = peer_addr
-    peer_port = int(peer_port)
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", int(my_port)))
-    print(f"[UDP] Listening on {my_port}")
-
-    t = threading.Thread(target=udp_listener, args=(sock,), daemon=True)
-    t.start()
-    print('Connecting...')
-    i = 0
-    while not connected:
-        if not received:
-            msg = f"HELLO from {my_name} #{i}".encode()
-            i += 1
-        else:
-            msg = b"CONFIRMRECEIVED"
-            connected = True
-        sock.sendto(msg, (peer_ip, peer_port))
-        print(msg.decode(), (peer_ip, peer_port))
-        time.sleep(0.5)
-    print('Succesfully connected')
-    return sock
-
-def sending_messages(sock):
-    """Read console input and send messages or commands."""
-    global peer_ip, peer_port, name
-    while True:
-        msg = input("")
-        print("\033[F\033[K", end="")
-        if not msg.startswith('/'):
-            print(f"(YOU) {msg}")
-            full_msg = f"[{name}]: {msg}"
-            sock.sendto(full_msg.encode(), (peer_ip, peer_port))
-        else:
-            parts = msg[1:].split()
-            cmd = parts[0].lower()
-            args = parts[1:]
-            if cmd in commands:
-                commands[cmd](sock, *args)
+    # ---------- Signaling ----------
+    def signaling_client(self, cmd, roomcode, url, username):
+        if cmd.upper() == "CREATE":
+            r = requests.get(
+                url + "/room/new",
+                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip}
+            )
+            if r.status_code == 200:
+                self.my_port = r.json()["status"].split(" ")[2].split(":")[1]
+                print(f"Room {roomcode} created")
+                while True:
+                    time.sleep(2)
+                    rr = requests.get(url + "/rooms")
+                    rooms = rr.json()
+                    if roomcode in rooms and len(rooms[roomcode]["peers"]) >= 2:
+                        rr2 = requests.get(
+                            url + "/room/join",
+                            params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip}
+                        )
+                        data = rr2.json()
+                        for uname, addr in data["peers"].items():
+                            if uname != username:
+                                sock = self.udp_start(addr.split(":"), username, self.my_port)
+                                return sock
             else:
-                print(f"Unknown command: {cmd}")
+                print("Error creating room:", r.text)
+                return None
 
-def get_server_info():
-    """
-    Get the signaling server base URL from the user.
-    Allows using saved values or changing them.
-    """
-    if "server_url" in config:
-        print("Where do you want to connect?")
-        print("(0) Saved server")
-        print("(00) See saved server")
-        print("(1) Change server")
-        choice = input("Enter number: ").strip()
+        elif cmd.upper() == "JOIN":
+            r = requests.get(
+                url + "/room/join",
+                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip}
+            )
+            if r.status_code == 404:
+                print(f"Room {roomcode} doesn't exist.")
+                return None
+            if r.status_code == 200:
+                self.my_port = r.json()["status"].split(" ")[2].split(":")[1]
+                print(f"Room {roomcode} exists. Joining...")
+                peers = r.json()["peers"]
+                for uname, addr in peers.items():
+                    if uname != username:
+                        sock = self.udp_start(addr.split(":"), username, self.my_port)
+                        return sock
+            else:
+                print("Error joining room:", r.text)
+                return None
 
+    # ---------- UDP ----------
+    def udp_listener(self, sock):
+        """Listen for incoming UDP packets."""
+        self.connected = False
+        self.received = False
+        while not self.connected:
+            try:
+                m, addr = sock.recvfrom(1024)
+                self.received = True
+                if 'CONFIRMRECEIVED' in m.decode():
+                    self.connected = True
+            except ConnectionResetError:
+                pass
+        self.last_seen = time.time()
         while True:
-            if choice == "0":
-                server_url = config["server_url"]
-                break
-            elif choice == '00':
-                print(f'Saved URL: {config["server_url"]}')
-                choice = input("Enter number: ").strip()
-            elif choice == "1":
-                server_url = input("Enter URL of your Signaling Server: ").strip()
-                config["server_url"] = server_url
-                save_config()
-                break
-    else:
-        server_url = input("Enter URL of your Signaling Server: ").strip()
-        config["server_url"] = server_url
-        save_config()
+            try:
+                msg, addr = sock.recvfrom(1024)
+            except ConnectionResetError:
+                print("Peer disconnected!")
+                sys.exit()
+            if msg.decode() == "#PING":
+                sock.sendto(b"#PONG", addr)
+            elif msg.decode() == "#PONG":
+                self.last_seen = time.time()
+            if not msg.decode().startswith('#'):
+                print(msg.decode())
 
-    return server_url
+    def check_timeout(self, sock, timeout=10):
+        """Send PING periodically and disconnect if timeout."""
+        while True:
+            time.sleep(1)
+            sock.sendto(b"#PING", (self.peer_ip, self.peer_port))
+            if time.time() - self.last_seen > timeout:
+                print("Peer disconnected!")
+                sys.exit()
 
-def generate_session_code(length=6):
-    """Generate a random uppercase alphanumeric code."""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+    def udp_start(self, peer_addr, my_name, my_port):
+        """Start UDP handshake with peer."""
+        self.peer_ip, self.peer_port = peer_addr
+        self.peer_port = int(self.peer_port)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", int(my_port)))
+        print(f"[UDP] Listening on {my_port}")
 
-def open_connection():
-    global public_partner, SERVER_URL, my_port, name
-    SERVER_URL = get_server_info()
-    name = input("What username do you want to use?\n")
-    while True:
-        choice = input("Do you want to create a room (0) or join one (1)?\n")
-        if choice == '0':
-            session_code = generate_session_code()
-            print("Session code:", session_code)
-            sock = None
-            while sock is None:
-                sock = signaling_client('CREATE', session_code, SERVER_URL, name)
-            return sock
-        elif choice == '1':
-            session_code = input("Enter room code:\n")
-            sock = None
-            while sock is None:
-                sock = signaling_client('JOIN', session_code, SERVER_URL, name)
-                if sock == 1:
+        t = threading.Thread(target=self.udp_listener, args=(sock,), daemon=True)
+        t.start()
+
+        print('Connecting...')
+        i = 0
+        while not self.connected:
+            if not self.received:
+                msg = f"HELLO from {my_name} #{i}".encode()
+                i += 1
+            else:
+                msg = b"CONFIRMRECEIVED"
+                self.connected = True
+            sock.sendto(msg, (self.peer_ip, self.peer_port))
+            print(msg.decode(), (self.peer_ip, self.peer_port))
+            time.sleep(0.5)
+
+        print('Successfully connected')
+        return sock
+
+    # ---------- Messaging ----------
+    def sending_messages(self, sock):
+        """Read console input and send messages or commands."""
+        while True:
+            msg = input("")
+            print("\033[F\033[K", end="")
+            if not msg.startswith('/'):
+                print(f"(YOU) {msg}")
+                full_msg = f"[{self.name}]: {msg}"
+                sock.sendto(full_msg.encode(), (self.peer_ip, self.peer_port))
+            else:
+                parts = msg[1:].split()
+                cmd = parts[0].lower()
+                args = parts[1:]
+                if cmd in self.commands:
+                    self.commands[cmd](sock, *args)
+                else:
+                    print(f"Unknown command: {cmd}")
+
+    # ---------- Server info ----------
+    def get_server_info(self):
+        """Get signaling server URL from user or saved config."""
+        if "server_url" in self.config:
+            print("Where do you want to connect?")
+            print("(0) Saved server")
+            print("(00) See saved server")
+            print("(1) Change server")
+            choice = input("Enter number: ").strip()
+            while True:
+                if choice == "0":
+                    server_url = self.config["server_url"]
                     break
-            if sock == 1:
-                continue
-            return sock
+                elif choice == '00':
+                    print(f'Saved URL: {self.config["server_url"]}')
+                    choice = input("Enter number: ").strip()
+                elif choice == "1":
+                    server_url = input("Enter URL of your Signaling Server: ").strip()
+                    self.config["server_url"] = server_url
+                    self.save_config()
+                    break
+        else:
+            server_url = input("Enter URL of your Signaling Server: ").strip()
+            self.config["server_url"] = server_url
+            self.save_config()
+        return server_url
 
-def main():
-    sock = open_connection()
-    threading.Thread(target=check_timeout, args=(sock,), daemon=True).start()
-    sending_messages(sock)
+    def generate_session_code(self, length=6):
+        """Generate a random uppercase alphanumeric session code."""
+        return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
-if __name__=='__main__':
-    main()
+    # ---------- Open connection ----------
+    def open_connection(self):
+        SERVER_URL = self.get_server_info()
+        self.name = input("What username do you want to use?\n")
+        while True:
+            choice = input("Do you want to create a room (0) or join one (1)?\n")
+            if choice == '0':
+                session_code = self.generate_session_code()
+                print("Session code:", session_code)
+                sock = None
+                while sock is None:
+                    sock = self.signaling_client('CREATE', session_code, SERVER_URL, self.name)
+                return sock
+            elif choice == '1':
+                session_code = input("Enter room code:\n")
+                sock = None
+                while sock is None:
+                    sock = self.signaling_client('JOIN', session_code, SERVER_URL, self.name)
+                    if sock is None:
+                        break
+                if sock is None:
+                    continue
+                return sock
+
+    # ---------- Main ----------
+    def run(self):
+        sock = self.open_connection()
+        threading.Thread(target=self.check_timeout, args=(sock,), daemon=True).start()
+        self.sending_messages(sock)
+
+
+if __name__ == '__main__':
+    client = CrypticClient()
+    client.run()
