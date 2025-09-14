@@ -170,6 +170,7 @@ def udp_listener(sock):
             last_seen = time.time()
         if not msg.decode().startswith('#'):
             print(msg.decode())
+            return msg.decode()
 
 def udp_start(peer_addr, my_name, my_port):
     global connected, peer_ip, peer_port
@@ -222,6 +223,7 @@ def sending_messages(sock):
             print(f"(YOU) {msg}")
             full_msg = f"[{name}]: {msg}"
             sock.sendto(full_msg.encode(), (peer_ip, peer_port))
+            return full_msg
         else:
             parts = msg[1:].split()  # removes '/' and separates
             cmd = parts[0].lower()  # command name
