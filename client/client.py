@@ -260,3 +260,5 @@ class CrypticClient:
 if __name__ == '__main__':
     client = CrypticClient()
     client.run()
+    
+# This is a comment
