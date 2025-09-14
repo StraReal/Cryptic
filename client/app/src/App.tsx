@@ -13,6 +13,18 @@ interface Message {
   timestamp: Date;
 }
 
+interface RoomResult {
+  error?: string;
+  status?: string;
+  room_code?: string;
+  my_port?: string;
+  my_ip?: string;
+  message?: string;
+  rawOutput?: string;
+  stderr?: string;
+}
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([
     {
