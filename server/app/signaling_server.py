@@ -100,7 +100,6 @@ async def lockroom(request):
     else:
         return web.Response(status=406)
 
-
 async def unlockroom(request):
     """
         Unlocks the room so no more clients can connect to the room.
