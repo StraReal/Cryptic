@@ -57,7 +57,7 @@ class Rooms:
 
     def matchpassword(self, password)->bool:
         """
-            Compare the password equivalency
+            Compare the password equivalency.
         """
         return self._password==password
 
@@ -70,11 +70,20 @@ class Rooms:
             self._password=new_password
             return True 
         return False
-
+    
+    def is_existing_user(self, requestuser: Users)-> bool:
+        """
+            This method checks if the coming request from an existing user or not.
+            This method handles a different scenario compared to the checks in the addclient() method.
+        """
+        for val in self._clients:
+            if val.getname()==requestuser.getname() and val.getipaddr()==requestuser.getipaddr():
+                return True
+        return False
 
     def dropclient(self, peerip:str):
         """
-            Drop a specific user from the room identified by their ip address
+            Drop a specific user from the room identified by their ip address.
         """
         idx=-1
         for i, client  in enumerate(self._clients):

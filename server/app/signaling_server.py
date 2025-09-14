@@ -68,10 +68,14 @@ async def join_room(request):
     newuser=Users(client_name, peerip)
 
     if room_code in rooms.keys():
+        if rooms[room_code].is_existing_user(newuser): ## Check if the user is already a registered user. Useful when an alredy registered user want to retrieve ips of all other connected cliens.
+            if rooms[room_code].getclientnos()<2:
+                return web.Response(body="[Warn]:There are no other user in the room.", status= 425 , content_type="text/plain")
+            return web.Response(body=json.dumps(rooms[room_code].getotherclients(peerip), default=userencoder, indent=2), status=200, content_type='application/json')
+
         match rooms[room_code].addclient(newuser, room_pass):
             case 1:
-                print("Total clients: ", rooms[room_code].getclientnos())
-                if rooms[room_code].getclientnos() <2:
+                if rooms[room_code].getclientnos()<2:
                     return web.Response(body="[Warn]:There are no other user in the room.", status= 425 , content_type="text/plain")
                 return web.Response(body=json.dumps(rooms[room_code].getotherclients(peerip), default=userencoder, indent=2),status=200, content_type='application/json')
             case -1:
