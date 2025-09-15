@@ -16,6 +16,7 @@ class CrypticClient:
 
     def __init__(self):
         # Peer state
+        self.private_port = 31825
         self.public_partner = None
         self.peer_ip = None
         self.peer_port = None
@@ -148,8 +149,8 @@ class CrypticClient:
         self.peer_ip, self.peer_port = peer_addr
         self.peer_port = int(self.peer_port)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(("0.0.0.0", int(my_port)))
-        print(f"[UDP] Listening on {my_port}")
+        sock.bind(("0.0.0.0", self.private_port))
+        print(f"[UDP] Listening on {self.private_port}")
 
         t = threading.Thread(target=self.udp_listener, args=(sock,), daemon=True)
         t.start()
