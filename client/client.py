@@ -19,6 +19,7 @@ class CrypticClient:
         self.public_partner = None
         self.peer_ip = None
         self.peer_port = None
+        self.my_ip = None
         self.my_port = None
         self.connected = False
         self.received = False
@@ -32,9 +33,13 @@ class CrypticClient:
                 self.config = json.load(f)
 
         # Retrieve public IP using STUN
-        nat_type, external_ip, external_port = stun.get_ip_info()
-        self.my_ip = external_ip
-        self.my_port = external_port  # default port suggested by NAT
+        attempt = 1
+        while None in (self.my_ip, self.my_port):
+            print(f"Contacting STUN server... (attempt {attempt})")
+            nat_type, external_ip, external_port = stun.get_ip_info()
+            self.my_ip = external_ip
+            self.my_port = external_port  # default port suggested by NAT
+            attempt += 1
         print(f"[STUN] Public IP detected: {self.my_ip}, External Port: {self.my_port}, NAT type: {nat_type}")
 
         # Commands
