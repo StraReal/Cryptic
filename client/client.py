@@ -70,10 +70,9 @@ class CrypticClient:
         if cmd.upper() == "CREATE":
             r = requests.get(
                 url + "/room/new",
-                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip}
+                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
             )
             if r.status_code == 200:
-                self.my_port = r.json()["status"].split(" ")[2].split(":")[1]
                 print(f"Room {roomcode} created")
                 while True:
                     time.sleep(2)
@@ -82,7 +81,7 @@ class CrypticClient:
                     if roomcode in rooms and len(rooms[roomcode]["peers"]) >= 2:
                         rr2 = requests.get(
                             url + "/room/join",
-                            params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip}
+                            params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
                         )
                         data = rr2.json()
                         for uname, addr in data["peers"].items():
@@ -96,13 +95,12 @@ class CrypticClient:
         elif cmd.upper() == "JOIN":
             r = requests.get(
                 url + "/room/join",
-                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip}
+                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
             )
             if r.status_code == 404:
                 print(f"Room {roomcode} doesn't exist.")
                 return None
             if r.status_code == 200:
-                self.my_port = r.json()["status"].split(" ")[2].split(":")[1]
                 print(f"Room {roomcode} exists. Joining...")
                 peers = r.json()["peers"]
                 for uname, addr in peers.items():
@@ -140,15 +138,6 @@ class CrypticClient:
             if not msg.decode().startswith('#'):
                 print(msg.decode())
 
-    def check_timeout(self, sock, timeout=10):
-        """Send PING periodically and disconnect if timeout."""
-        while True:
-            time.sleep(1)
-            sock.sendto(b"#PING", (self.peer_ip, self.peer_port))
-            if time.time() - self.last_seen > timeout:
-                print("Peer disconnected!")
-                sys.exit()
-
     def udp_start(self, peer_addr, my_name, my_port):
         """Start UDP handshake with peer."""
         self.peer_ip, self.peer_port = peer_addr
@@ -175,6 +164,15 @@ class CrypticClient:
 
         print('Successfully connected')
         return sock
+
+    def check_timeout(self, sock, timeout=10):
+        """Send PING periodically and disconnect if timeout."""
+        while True:
+            time.sleep(1)
+            sock.sendto(b"#PING", (self.peer_ip, self.peer_port))
+            if time.time() - self.last_seen > timeout:
+                print("Peer disconnected!")
+                sys.exit()
 
     # ---------- Messaging ----------
     def sending_messages(self, sock):

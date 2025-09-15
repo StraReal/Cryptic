@@ -34,12 +34,12 @@ async def create_room(request: web.Request):
     params = request.rel_url.query
     room_code = params.get("room_code")
     username = params.get("username")
-    peer_ip   = params.get("peer_ip")
+    peer_ip = params.get("peer_ip")
+    peer_port = params.get("peer_port")
 
-    if not room_code or not username or not peer_ip:
+    if not room_code or not username or not peer_ip or not peer_port:
         return web.json_response({"error": "missing parameters"}, status=400)
 
-    peer_port = request.transport.get_extra_info('peername')[1]
     peer_addr = f"{peer_ip}:{peer_port}"
 
     if room_code in rooms:
@@ -65,11 +65,11 @@ async def join_room(request: web.Request):
     room_code = params.get("room_code")
     username = params.get("username")
     peer_ip   = params.get("peer_ip")
+    peer_port = params.get("peer_port")
 
     if not room_code or not username or not peer_ip:
         return web.json_response({"error": "missing parameters"}, status=400)
 
-    peer_port = request.transport.get_extra_info('peername')[1]
     peer_addr = f"{peer_ip}:{peer_port}"
 
     if room_code not in rooms:
