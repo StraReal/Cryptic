@@ -10,6 +10,22 @@ import requests
 import tkinter as tk
 from tkinter import filedialog
 import stun  # STUN for public IP detection
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+
+import os
+import sys
+import json
+import time
+import random
+import string
+import asyncio
+import threading
+import tkinter as tk
+from tkinter import filedialog
+import requests
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+import stun
+
 
 class CrypticClient:
     CONFIG_FILE = "config.json"
@@ -20,13 +36,15 @@ class CrypticClient:
         self.public_partner = None
         self.peer_ip = None
         self.peer_port = None
-        self.my_ip = None
-        self.my_port = None
         self.connected = False
         self.received = False
         self.last_seen = None
         self.name = None
         self.config = {}
+
+        # aiortc objects
+        self.pc = None
+        self.channel = None
 
         # Load config
         if os.path.exists(self.CONFIG_FILE):
@@ -34,20 +52,26 @@ class CrypticClient:
                 self.config = json.load(f)
 
         # Retrieve public IP using STUN
-        attempt = 1
-        while None in (self.my_ip, self.my_port):
-            print(f"Contacting STUN server... (attempt {attempt})")
-            nat_type, external_ip, external_port = stun.get_ip_info()
-            self.my_ip = external_ip
-            self.my_port = external_port  # default port suggested by NAT
-            attempt += 1
-        print(f"[STUN] Public IP detected: {self.my_ip}, External Port: {self.my_port}, NAT type: {nat_type}")
+        self.my_ip, self.my_port, self.nat_type = self.get_stun()
+        print(f"[STUN] Public IP detected: {self.my_ip}, External Port: {self.my_port}, NAT type: {self.nat_type}")
 
         # Commands
         self.commands = {
             "sendfile": self.cmd_sendfile,
             "quit": self.cmd_quit,
         }
+
+    @staticmethod
+    def get_stun():
+        my_ip, my_port = None, None
+        attempt = 1
+        while None in (my_ip, my_port):
+            print(f"Contacting STUN server... (attempt {attempt})")
+            nat_type, external_ip, external_port = stun.get_ip_info()
+            my_ip = external_ip
+            my_port = external_port
+            attempt += 1
+        return my_ip, my_port, nat_type
 
     # ---------- Config ----------
     def save_config(self):
@@ -63,7 +87,8 @@ class CrypticClient:
         try:
             with open(path, "rb") as f:
                 data = f.read()
-            sock.sendto(data, (self.peer_ip, self.peer_port))
+            # Send file over data channel
+            self.channel.send(data)
         except Exception as e:
             print(f"Couldn't send file: {e}")
 
@@ -72,31 +97,38 @@ class CrypticClient:
         sys.exit()
 
     # ---------- Signaling ----------
-    def signaling_client(self, cmd, roomcode, url, username):
+    async def signaling_client(self, cmd, roomcode, url, username):
+        """WebRTC version of signaling_client"""
+        self.pc = RTCPeerConnection()
+        self.channel = self.pc.createDataChannel("chat")
+        self.channel.on("open", lambda: print("[WebRTC] Data channel opened"))
+        self.channel.on("message", self.on_message)
+
         if cmd.upper() == "CREATE":
             r = requests.get(
                 url + "/room/new",
                 params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
             )
-            if r.status_code == 200:
-                print(f"Room {roomcode} created")
-                while True:
-                    time.sleep(2)
-                    rr = requests.get(url + "/rooms")
-                    rooms = rr.json()
-                    if roomcode in rooms and len(rooms[roomcode]["peers"]) >= 2:
-                        rr2 = requests.get(
-                            url + "/room/join",
-                            params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
-                        )
-                        data = rr2.json()
-                        for uname, addr in data["peers"].items():
-                            if uname != username:
-                                sock = self.udp_start(addr.split(":"), username, self.my_port)
-                                return sock
-            else:
+            if r.status_code != 200:
                 print("Error creating room:", r.text)
                 return None
+
+            print(f"Room {roomcode} created. Waiting for peers...")
+
+            while True:
+                await asyncio.sleep(2)
+                rr = requests.get(url + "/rooms")
+                rooms = rr.json()
+                if roomcode in rooms and len(rooms[roomcode]["peers"]) >= 2:
+                    rr2 = requests.get(
+                        url + "/room/join",
+                        params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
+                    )
+                    data = rr2.json()
+                    for uname, addr in data["peers"].items():
+                        if uname != username:
+                            await self.connect_peer(addr)
+                            return self.channel
 
         elif cmd.upper() == "JOIN":
             r = requests.get(
@@ -107,101 +139,70 @@ class CrypticClient:
                 print(f"Room {roomcode} doesn't exist.")
                 return None
             if r.status_code == 200:
-                print(f"Room {roomcode} exists. Joining...")
                 peers = r.json()["peers"]
                 for uname, addr in peers.items():
                     if uname != username:
-                        sock = self.udp_start(addr.split(":"), username, self.my_port)
-                        return sock
+                        await self.connect_peer(addr)
+                        return self.channel
             else:
                 print("Error joining room:", r.text)
                 return None
 
-    # ---------- UDP ----------
-    def udp_listener(self, sock):
-        """Listen for incoming UDP packets."""
-        self.connected = False
-        self.received = False
-        while not self.connected:
-            try:
-                m, addr = sock.recvfrom(1024)
-                self.received = True
-                if 'CONFIRMRECEIVED' in m.decode():
-                    self.connected = True
-            except ConnectionResetError:
-                pass
+    async def connect_peer(self, addr):
+        """Perform WebRTC handshake with peer via signaling server."""
+        ip, port = addr.split(":")
+        port = int(port)
+
+        offer = await self.pc.createOffer()
+        await self.pc.setLocalDescription(offer)
+
+        # Send offer to signaling server
+        r = requests.post(
+            f"http://{ip}:{port}/offer",
+            json={"sdp": self.pc.localDescription.sdp, "type": self.pc.localDescription.type}
+        )
+        answer = r.json()
+        await self.pc.setRemoteDescription(
+            RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
+        )
+        self.connected = True
         self.last_seen = time.time()
-        while True:
-            try:
-                msg, addr = sock.recvfrom(1024)
-            except ConnectionResetError:
-                print("Peer disconnected!")
-                sys.exit()
-            if msg.decode() == "#PING":
-                sock.sendto(b"#PONG", addr)
-            elif msg.decode() == "#PONG":
-                self.last_seen = time.time()
-            if not msg.decode().startswith('#'):
-                print(msg.decode())
-
-    def udp_start(self, peer_addr, my_name, my_port):
-        """Start UDP handshake with peer."""
-        self.peer_ip, self.peer_port = peer_addr
-        self.peer_port = int(self.peer_port)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(("0.0.0.0", self.private_port))
-        print(f"[UDP] Listening on {self.private_port}")
-
-        t = threading.Thread(target=self.udp_listener, args=(sock,), daemon=True)
-        t.start()
-
-        print('Connecting...')
-        i = 0
-        while not self.connected:
-            if not self.received:
-                msg = f"HELLO from {my_name} #{i}".encode()
-                i += 1
-            else:
-                msg = b"CONFIRMRECEIVED"
-                self.connected = True
-            sock.sendto(msg, (self.peer_ip, self.peer_port))
-            print(msg.decode(), (self.peer_ip, self.peer_port))
-            time.sleep(0.5)
-
-        print('Successfully connected')
-        return sock
-
-    def check_timeout(self, sock, timeout=10):
-        """Send PING periodically and disconnect if timeout."""
-        while True:
-            time.sleep(1)
-            sock.sendto(b"#PING", (self.peer_ip, self.peer_port))
-            if time.time() - self.last_seen > timeout:
-                print("Peer disconnected!")
-                sys.exit()
+        print("[WebRTC] Peer connected!")
 
     # ---------- Messaging ----------
-    def sending_messages(self, sock):
+    def on_message(self, msg):
+        if isinstance(msg, bytes):
+            print("[FILE] Received bytes:", len(msg))
+        else:
+            print(msg)
+
+    async def sending_messages_async(self):
         """Read console input and send messages or commands."""
         while True:
-            msg = input("")
-            print("\033[F\033[K", end="")
+            msg = await asyncio.to_thread(input, "")
             if not msg.startswith('/'):
                 print(f"(YOU) {msg}")
                 full_msg = f"[{self.name}]: {msg}"
-                sock.sendto(full_msg.encode(), (self.peer_ip, self.peer_port))
+                self.channel.send(full_msg)
             else:
                 parts = msg[1:].split()
                 cmd = parts[0].lower()
                 args = parts[1:]
                 if cmd in self.commands:
-                    self.commands[cmd](sock, *args)
+                    self.commands[cmd](self.channel, *args)
                 else:
                     print(f"Unknown command: {cmd}")
 
+    # ---------- Timeout ----------
+    async def check_timeout_async(self, timeout=10):
+        while True:
+            await asyncio.sleep(1)
+            if self.connected and (time.time() - self.last_seen > timeout):
+                print("Peer disconnected!")
+                sys.exit()
+
     # ---------- Server info ----------
     def get_server_info(self):
-        """Get signaling server URL from user or saved config."""
         if "server_url" in self.config:
             print("Where do you want to connect?")
             print("(0) Saved server")
@@ -210,8 +211,7 @@ class CrypticClient:
             choice = input("Enter number: ").strip()
             while True:
                 if choice == "0":
-                    server_url = self.config["server_url"]
-                    break
+                    return self.config["server_url"]
                 elif choice == '00':
                     print(f'Saved URL: {self.config["server_url"]}')
                     choice = input("Enter number: ").strip()
@@ -219,19 +219,18 @@ class CrypticClient:
                     server_url = input("Enter URL of your Signaling Server: ").strip()
                     self.config["server_url"] = server_url
                     self.save_config()
-                    break
+                    return server_url
         else:
             server_url = input("Enter URL of your Signaling Server: ").strip()
             self.config["server_url"] = server_url
             self.save_config()
-        return server_url
+            return server_url
 
     def generate_session_code(self, length=6):
-        """Generate a random uppercase alphanumeric session code."""
         return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
     # ---------- Open connection ----------
-    def open_connection(self):
+    async def open_connection_async(self):
         SERVER_URL = self.get_server_info()
         self.name = input("What username do you want to use?\n")
         while True:
@@ -239,26 +238,31 @@ class CrypticClient:
             if choice == '0':
                 session_code = self.generate_session_code()
                 print("Session code:", session_code)
-                sock = None
-                while sock is None:
-                    sock = self.signaling_client('CREATE', session_code, SERVER_URL, self.name)
-                return sock
+                channel = None
+                while channel is None:
+                    channel = await self.signaling_client('CREATE', session_code, SERVER_URL, self.name)
+                return channel
             elif choice == '1':
                 session_code = input("Enter room code:\n")
-                sock = None
-                while sock is None:
-                    sock = self.signaling_client('JOIN', session_code, SERVER_URL, self.name)
-                    if sock is None:
+                channel = None
+                while channel is None:
+                    channel = await self.signaling_client('JOIN', session_code, SERVER_URL, self.name)
+                    if channel is None:
                         break
-                if sock is None:
+                if channel is None:
                     continue
-                return sock
+                return channel
 
     # ---------- Main ----------
     def run(self):
-        sock = self.open_connection()
-        threading.Thread(target=self.check_timeout, args=(sock,), daemon=True).start()
-        self.sending_messages(sock)
+        asyncio.run(self._run_async())
+
+    async def _run_async(self):
+        await self.open_connection_async()
+        await asyncio.gather(
+            self.sending_messages_async(),
+            self.check_timeout_async()
+        )
 
 
 if __name__ == '__main__':
