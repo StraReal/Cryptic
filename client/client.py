@@ -85,43 +85,38 @@ class CrypticClient:
     # ---------- Signaling ----------
     async def connect_peer(self, server_url, room_code, username):
         """
-        Negotiate WebRTC connection via signaling server.
+        Send offer to signaling server and wait for peer's answer.
         """
         self.pc = RTCPeerConnection()
         self.channel = self.pc.createDataChannel("chat")
-
-        # Event handlers
         self.channel.on("open", lambda: print("[WebRTC] Data channel opened"))
         self.channel.on("message", self.on_message)
 
-        # Create local SDP offer
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)
 
-        # Send offer to signaling server
-        try:
-            r = requests.post(
-                f"{server_url}/offer",
-                json={
-                    "room_code": room_code,
-                    "username": username,
-                    "sdp": self.pc.localDescription.sdp,
-                    "type": self.pc.localDescription.type
-                },
-                timeout=5
-            )
-            r.raise_for_status()
-        except requests.RequestException as e:
-            print(f"[ERROR] Failed to send offer: {e}")
+        # Send offer to server
+        r = requests.post(
+            f"{server_url}/offer",
+            json={
+                "room_code": room_code,
+                "username": username,
+                "sdp": self.pc.localDescription.sdp,
+                "type": self.pc.localDescription.type
+            },
+            timeout=5
+        )
+        r.raise_for_status()
+        answer = r.json()
+
+        if "error" in answer:
+            print(f"[ERROR] Offer failed: {answer['error']}")
             return None
 
-        answer = r.json()
+        # Set remote description
         await self.pc.setRemoteDescription(
             RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
         )
-
-        self.connected = True
-        self.last_seen = time.time()
         print("[WebRTC] Peer connected!")
         return self.channel
 
