@@ -1,17 +1,3 @@
-import random
-import socket
-import json
-import os
-import string
-import sys
-import threading
-import time
-import requests
-import tkinter as tk
-from tkinter import filedialog
-import stun  # STUN for public IP detection
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-
 import os
 import sys
 import json
@@ -97,8 +83,54 @@ class CrypticClient:
         sys.exit()
 
     # ---------- Signaling ----------
+    async def connect_peer(self, server_url, room_code, username):
+        """
+        Negotiate WebRTC connection via signaling server.
+        """
+        self.pc = RTCPeerConnection()
+        self.channel = self.pc.createDataChannel("chat")
+
+        # Event handlers
+        self.channel.on("open", lambda: print("[WebRTC] Data channel opened"))
+        self.channel.on("message", self.on_message)
+
+        # Create local SDP offer
+        offer = await self.pc.createOffer()
+        await self.pc.setLocalDescription(offer)
+
+        # Send offer to signaling server
+        try:
+            r = requests.post(
+                f"{server_url}/offer",
+                json={
+                    "room_code": room_code,
+                    "username": username,
+                    "sdp": self.pc.localDescription.sdp,
+                    "type": self.pc.localDescription.type
+                },
+                timeout=5
+            )
+            r.raise_for_status()
+        except requests.RequestException as e:
+            print(f"[ERROR] Failed to send offer: {e}")
+            return None
+
+        answer = r.json()
+        await self.pc.setRemoteDescription(
+            RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
+        )
+
+        self.connected = True
+        self.last_seen = time.time()
+        print("[WebRTC] Peer connected!")
+        return self.channel
+
     async def signaling_client(self, cmd, roomcode, url, username):
-        """WebRTC version of signaling_client"""
+        """
+        WebRTC version of signaling_client.
+        Handles CREATE or JOIN room via signaling server.
+        """
+        # Always prepare PeerConnection and DataChannel
         self.pc = RTCPeerConnection()
         self.channel = self.pc.createDataChannel("chat")
         self.channel.on("open", lambda: print("[WebRTC] Data channel opened"))
@@ -106,8 +138,13 @@ class CrypticClient:
 
         if cmd.upper() == "CREATE":
             r = requests.get(
-                url + "/room/new",
-                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
+                f"{url}/room/new",
+                params={
+                    "room_code": roomcode,
+                    "username": username,
+                    "peer_ip": self.my_ip,
+                    "peer_port": self.my_port
+                }
             )
             if r.status_code != 200:
                 print("Error creating room:", r.text)
@@ -117,57 +154,35 @@ class CrypticClient:
 
             while True:
                 await asyncio.sleep(2)
-                rr = requests.get(url + "/rooms")
-                rooms = rr.json()
+                rooms = requests.get(f"{url}/rooms").json()
                 if roomcode in rooms and len(rooms[roomcode]["peers"]) >= 2:
-                    rr2 = requests.get(
-                        url + "/room/join",
-                        params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
-                    )
-                    data = rr2.json()
-                    for uname, addr in data["peers"].items():
-                        if uname != username:
-                            await self.connect_peer(addr)
-                            return self.channel
+                    # Join room via server and negotiate WebRTC
+                    await self.connect_peer(url, roomcode, username)
+                    return self.channel
 
         elif cmd.upper() == "JOIN":
             r = requests.get(
-                url + "/room/join",
-                params={"room_code": roomcode, "username": username, "peer_ip": self.my_ip, "peer_port": self.my_port}
+                f"{url}/room/join",
+                params={
+                    "room_code": roomcode,
+                    "username": username,
+                    "peer_ip": self.my_ip,
+                    "peer_port": self.my_port
+                }
             )
             if r.status_code == 404:
                 print(f"Room {roomcode} doesn't exist.")
                 return None
-            if r.status_code == 200:
-                peers = r.json()["peers"]
-                for uname, addr in peers.items():
-                    if uname != username:
-                        await self.connect_peer(addr)
-                        return self.channel
-            else:
+            if r.status_code != 200:
                 print("Error joining room:", r.text)
                 return None
 
-    async def connect_peer(self, addr):
-        """Perform WebRTC handshake with peer via signaling server."""
-        ip, port = addr.split(":")
-        port = int(port)
-
-        offer = await self.pc.createOffer()
-        await self.pc.setLocalDescription(offer)
-
-        # Send offer to signaling server
-        r = requests.post(
-            f"http://{ip}:{port}/offer",
-            json={"sdp": self.pc.localDescription.sdp, "type": self.pc.localDescription.type}
-        )
-        answer = r.json()
-        await self.pc.setRemoteDescription(
-            RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
-        )
-        self.connected = True
-        self.last_seen = time.time()
-        print("[WebRTC] Peer connected!")
+            peers = r.json()["peers"]
+            # Negotiate WebRTC with any peer in room
+            for uname in peers:
+                if uname != username:
+                    await self.connect_peer(url, roomcode, username)
+                    return self.channel
 
     # ---------- Messaging ----------
     def on_message(self, msg):
