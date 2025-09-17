@@ -73,7 +73,7 @@ class ChatClient:
             choice = input("Do you want to create a room (0) or join one (1)?\n")
             if choice == "0":
                 self.create = True
-                self.room = input("Enter a 6-character room code to create:\n").strip()
+                self.room = input("Enter a 6-character room code to create:\n").strip().upper()
                 if len(self.room) != 6:
                     print("Room code must be exactly 6 characters.")
                     continue
@@ -81,7 +81,7 @@ class ChatClient:
                 break
             elif choice == "1":
                 self.create = False
-                self.room = input("Enter the 6-character room code to join:\n").strip()
+                self.room = input("Enter the 6-character room code to join:\n").strip().upper()
                 if len(self.room) != 6:
                     print("Room code must be exactly 6 characters.")
                     continue
@@ -96,6 +96,7 @@ class ChatClient:
             "create": self.create
         }))
 
+        # Wait for the server's joined/error message
         async for raw in self.ws:
             try:
                 data = json.loads(raw)
@@ -104,11 +105,10 @@ class ChatClient:
             if data.get("type") == "error":
                 print("Server error:", data.get("message"))
                 await self.ws.close()
-                return False
+                return None
             elif data.get("type") == "joined":
                 print(f"Joined room {data.get('room')}")
-                break
-        return True
+                return data  #pass the full message back to run()
 
     async def async_input_loop(self, channel):
         loop = asyncio.get_event_loop()
@@ -122,14 +122,16 @@ class ChatClient:
                 await self.ws.close()
                 await self.pc.close()
                 break
-            channel.send(f"{self.name}: {msg}")
+            channel.send(f"[{self.name}] {msg}")
 
     async def run(self):
         server_url = self.get_server_info()
         await self.connect_server(server_url)
 
-        joined = await self.join_room()
-        if not joined:
+        # Join the room and get the server's joined data
+        joined_data = await self.join_room()
+        print(joined_data)
+        if not joined_data:
             return
 
         # handle local data channel
@@ -139,24 +141,40 @@ class ChatClient:
         def on_open():
             logging.info("DataChannel open — start typing messages")
             asyncio.create_task(self.async_input_loop(channel))
+            channel.send('Hi peer!')
 
-        @channel.on("message")
-        def on_message(message):
-            print(f"<< {message}")
+        @self.pc.on("datachannel")
+        def on_datachannel(channel):
+            @channel.on("message")
+            def on_message(msg):
+                print(msg)
 
         @self.pc.on("iceconnectionstatechange")
         def on_ice_state():
             print("ICE state:", self.pc.iceConnectionState)
 
-        # Listen to server messages continuously
+        # If we are the offerer, create and send the offer immediately
+        if joined_data.get("offerer"):
+            offer = await self.pc.createOffer()
+            await self.pc.setLocalDescription(offer)
+            await self.ws.send(json.dumps({
+                "type": "offer",
+                "room": self.room,
+                "from": self.name,
+                "sdp": self.pc.localDescription.sdp,
+                "sdpType": self.pc.localDescription.type
+            }))
+
+        # Main message loop
         async for raw in self.ws:
             try:
                 data = json.loads(raw)
             except Exception:
                 continue
             t = data.get("type")
+
+            # handle incoming offer from another peer
             if t == "offer" and data.get("from") != self.name and data.get("room") == self.room:
-                # received offer, create answer
                 offer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
                 await self.pc.setRemoteDescription(offer_desc)
                 answer = await self.pc.createAnswer()
@@ -168,10 +186,13 @@ class ChatClient:
                     "sdp": self.pc.localDescription.sdp,
                     "sdpType": self.pc.localDescription.type
                 }))
+
+            # handle incoming answer for our offer
             elif t == "answer" and data.get("from") != self.name and data.get("room") == self.room:
-                # received answer for our offer
                 answer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
                 await self.pc.setRemoteDescription(answer_desc)
+
+            # handle BYE
             elif t == "bye":
                 logging.info("Peer said BYE — exiting")
                 break

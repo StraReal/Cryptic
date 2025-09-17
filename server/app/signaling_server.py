@@ -10,7 +10,8 @@ routes = web.RouteTableDef()
 BASE_DIR = pathlib.Path(__file__).parent
 INDEX_FILE = BASE_DIR / "index.html"
 
-# rooms: { room_code: { "peers": set(ws), "names": {ws: username}, "password": str } }
+# rooms: { room_code: { "peers": set(ws), "names": {ws: username}, "password": str,
+#                        "pending_offer": dict, "pending_answer": dict } }
 rooms = {}
 
 
@@ -47,12 +48,14 @@ async def websocket_handler(request):
                         rooms[room_code] = {
                             "peers": {ws},
                             "names": {ws: username},
-                            "password": password
+                            "password": password,
+                            "pending_offer": None,
+                            "pending_answer": None
                         }
                         current_room = room_code
                         current_name = username
                         logging.info("Room %s created by %s", room_code, username)
-                        await ws.send_str(json.dumps({"type": "joined", "room": room_code}))
+                        await ws.send_str(json.dumps({"type": "joined", "room": room_code, "offerer": True }))
                     else:
                         room = rooms.get(room_code)
                         if not room:
@@ -68,16 +71,36 @@ async def websocket_handler(request):
                         current_room = room_code
                         current_name = username
                         logging.info("%s joined room %s", username, room_code)
-                        await ws.send_str(json.dumps({"type": "joined", "room": room_code}))
+                        await ws.send_str(json.dumps({"type": "joined", "room": room_code, "offerer": False }))
+
+                        # send pending offer if it exists
+                        if room.get("pending_offer"):
+                            await ws.send_str(json.dumps(room["pending_offer"]))
+
+                        # send pending answer if it exists (rare, but just in case)
+                        if room.get("pending_answer"):
+                            await ws.send_str(json.dumps(room["pending_answer"]))
 
                 elif t in ("offer", "answer", "ice", "bye"):
                     if current_room and current_room in rooms:
                         room = rooms[current_room]
+
+                        # store pending offer/answer for late joiners
+                        if t == "offer":
+                            room["pending_offer"] = dict(data)
+                        elif t == "answer":
+                            room["pending_answer"] = dict(data)
+
                         for peer in list(room["peers"]):
                             if peer is not ws and not peer.closed:
                                 payload = dict(data)
                                 payload["from"] = current_name
                                 payload["room"] = current_room
+                                if t in ("offer", "answer"):
+                                    logging.info("Relaying %s from %s to %s in room %s",
+                                                 t, current_name,
+                                                 room["names"].get(peer, "<unknown>"),
+                                                 current_room)
                                 await peer.send_str(json.dumps(payload))
                 else:
                     logging.warning("Unknown message type: %s", t)
@@ -90,6 +113,7 @@ async def websocket_handler(request):
             room = rooms[current_room]
             room["peers"].discard(ws)
             room["names"].pop(ws, None)
+            # clear pending offer/answer if room is empty
             if not room["peers"]:
                 del rooms[current_room]
                 logging.info("Room %s deleted (empty)", current_room)
