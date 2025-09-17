@@ -1,217 +1,45 @@
+import asyncio
+import json
+import logging
 import os
 import sys
-import json
-import time
-import random
-import string
-import asyncio
-import threading
-import tkinter as tk
-from tkinter import filedialog
-import requests
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-import stun
+from aiortc import RTCPeerConnection, RTCSessionDescription
+import websockets
 
+logging.basicConfig(level=logging.INFO)
 
-class CrypticClient:
-    CONFIG_FILE = "config.json"
+CONFIG_FILE = "config.json"
 
+def to_websocket_url(url):
+    """
+    Convert any http(s) URL to a ws(s) URL and ensure it ends with '/ws'.
+    """
+    scheme, rest = url.split("://", 1)
+    ws_scheme = "wss" if scheme == "https" else "ws"
+    # Remove trailing slashes and always append '/ws'
+    return f"{ws_scheme}://{rest.rstrip('/')}/ws"
+
+class ChatClient:
     def __init__(self):
-        # Peer state
-        self.private_port = 31825
-        self.public_partner = None
-        self.peer_ip = None
-        self.peer_port = None
-        self.connected = False
-        self.received = False
-        self.last_seen = None
-        self.name = None
         self.config = {}
+        self.name = None
+        self.room = None
+        self.password = ""
+        self.create = False
+        self.load_config()
+        self.pc = RTCPeerConnection()
 
-        # aiortc objects
-        self.pc = None
-        self.channel = None
-
-        # Load config
-        if os.path.exists(self.CONFIG_FILE):
-            with open(self.CONFIG_FILE, "r") as f:
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
                 self.config = json.load(f)
-
-        # Retrieve public IP using STUN
-        self.my_ip, self.my_port, self.nat_type = self.get_stun()
-        print(f"[STUN] Public IP detected: {self.my_ip}, External Port: {self.my_port}, NAT type: {self.nat_type}")
-
-        # Commands
-        self.commands = {
-            "sendfile": self.cmd_sendfile,
-            "quit": self.cmd_quit,
-        }
-
-    @staticmethod
-    def get_stun():
-        my_ip, my_port = None, None
-        attempt = 1
-        while None in (my_ip, my_port):
-            print(f"Contacting STUN server... (attempt {attempt})")
-            nat_type, external_ip, external_port = stun.get_ip_info()
-            my_ip = external_ip
-            my_port = external_port
-            attempt += 1
-        return my_ip, my_port, nat_type
-
-    # ---------- Config ----------
-    def save_config(self):
-        with open(self.CONFIG_FILE, "w") as f:
-            json.dump(self.config, f, indent=4)
-
-    # ---------- Commands ----------
-    def cmd_sendfile(self, sock, *args):
-        root = tk.Tk()
-        root.withdraw()
-        path = filedialog.askopenfilename(title="Select a file")
-        root.destroy()
-        try:
-            with open(path, "rb") as f:
-                data = f.read()
-            # Send file over data channel
-            self.channel.send(data)
-        except Exception as e:
-            print(f"Couldn't send file: {e}")
-
-    def cmd_quit(self, *args):
-        print("Quitting...")
-        sys.exit()
-
-    # ---------- Signaling ----------
-    async def connect_peer(self, server_url, room_code, username):
-        """
-        Send offer to signaling server and wait for peer's answer.
-        """
-        self.pc = RTCPeerConnection()
-        self.channel = self.pc.createDataChannel("chat")
-        self.channel.on("open", lambda: print("[WebRTC] Data channel opened"))
-        self.channel.on("message", self.on_message)
-
-        offer = await self.pc.createOffer()
-        await self.pc.setLocalDescription(offer)
-
-        # Send offer to server
-        r = requests.post(
-            f"{server_url}/offer",
-            json={
-                "room_code": room_code,
-                "username": username,
-                "sdp": self.pc.localDescription.sdp,
-                "type": self.pc.localDescription.type
-            },
-            timeout=5
-        )
-        r.raise_for_status()
-        answer = r.json()
-
-        if "error" in answer:
-            print(f"[ERROR] Offer failed: {answer['error']}")
-            return None
-
-        # Set remote description
-        await self.pc.setRemoteDescription(
-            RTCSessionDescription(sdp=answer["sdp"], type=answer["type"])
-        )
-        print("[WebRTC] Peer connected!")
-        return self.channel
-
-    async def signaling_client(self, cmd, roomcode, url, username):
-        """
-        WebRTC version of signaling_client.
-        Handles CREATE or JOIN room via signaling server.
-        """
-        # Always prepare PeerConnection and DataChannel
-        self.pc = RTCPeerConnection()
-        self.channel = self.pc.createDataChannel("chat")
-        self.channel.on("open", lambda: print("[WebRTC] Data channel opened"))
-        self.channel.on("message", self.on_message)
-
-        if cmd.upper() == "CREATE":
-            r = requests.get(
-                f"{url}/room/new",
-                params={
-                    "room_code": roomcode,
-                    "username": username,
-                    "peer_ip": self.my_ip,
-                    "peer_port": self.my_port
-                }
-            )
-            if r.status_code != 200:
-                print("Error creating room:", r.text)
-                return None
-
-            print(f"Room {roomcode} created. Waiting for peers...")
-
-            while True:
-                await asyncio.sleep(2)
-                rooms = requests.get(f"{url}/rooms").json()
-                if roomcode in rooms and len(rooms[roomcode]["peers"]) >= 2:
-                    # Join room via server and negotiate WebRTC
-                    await self.connect_peer(url, roomcode, username)
-                    return self.channel
-
-        elif cmd.upper() == "JOIN":
-            r = requests.get(
-                f"{url}/room/join",
-                params={
-                    "room_code": roomcode,
-                    "username": username,
-                    "peer_ip": self.my_ip,
-                    "peer_port": self.my_port
-                }
-            )
-            if r.status_code == 404:
-                print(f"Room {roomcode} doesn't exist.")
-                return None
-            if r.status_code != 200:
-                print("Error joining room:", r.text)
-                return None
-
-            peers = r.json()["peers"]
-            # Negotiate WebRTC with any peer in room
-            for uname in peers:
-                if uname != username:
-                    await self.connect_peer(url, roomcode, username)
-                    return self.channel
-
-    # ---------- Messaging ----------
-    def on_message(self, msg):
-        if isinstance(msg, bytes):
-            print("[FILE] Received bytes:", len(msg))
         else:
-            print(msg)
+            self.config = {}
 
-    async def sending_messages_async(self):
-        """Read console input and send messages or commands."""
-        while True:
-            msg = await asyncio.to_thread(input, "")
-            if not msg.startswith('/'):
-                print(f"(YOU) {msg}")
-                full_msg = f"[{self.name}]: {msg}"
-                self.channel.send(full_msg)
-            else:
-                parts = msg[1:].split()
-                cmd = parts[0].lower()
-                args = parts[1:]
-                if cmd in self.commands:
-                    self.commands[cmd](self.channel, *args)
-                else:
-                    print(f"Unknown command: {cmd}")
+    def save_config(self):
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(self.config, f)
 
-    # ---------- Timeout ----------
-    async def check_timeout_async(self, timeout=10):
-        while True:
-            await asyncio.sleep(1)
-            if self.connected and (time.time() - self.last_seen > timeout):
-                print("Peer disconnected!")
-                sys.exit()
-
-    # ---------- Server info ----------
     def get_server_info(self):
         if "server_url" in self.config:
             print("Where do you want to connect?")
@@ -222,59 +50,137 @@ class CrypticClient:
             while True:
                 if choice == "0":
                     return self.config["server_url"]
-                elif choice == '00':
+                elif choice == "00":
                     print(f'Saved URL: {self.config["server_url"]}')
                     choice = input("Enter number: ").strip()
                 elif choice == "1":
-                    server_url = input("Enter URL of your Signaling Server: ").strip()
+                    server_url = input("Enter server URL: ").strip()
                     self.config["server_url"] = server_url
                     self.save_config()
                     return server_url
         else:
-            server_url = input("Enter URL of your Signaling Server: ").strip()
+            server_url = input("Enter WebSocket URL: ").strip()
             self.config["server_url"] = server_url
             self.save_config()
             return server_url
 
-    def generate_session_code(self, length=6):
-        return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+    async def connect_server(self, url):
+        self.ws = await websockets.connect(to_websocket_url(url))
 
-    # ---------- Open connection ----------
-    async def open_connection_async(self):
-        SERVER_URL = self.get_server_info()
+    async def join_room(self):
         self.name = input("What username do you want to use?\n")
         while True:
             choice = input("Do you want to create a room (0) or join one (1)?\n")
-            if choice == '0':
-                session_code = self.generate_session_code()
-                print("Session code:", session_code)
-                channel = None
-                while channel is None:
-                    channel = await self.signaling_client('CREATE', session_code, SERVER_URL, self.name)
-                return channel
-            elif choice == '1':
-                session_code = input("Enter room code:\n")
-                channel = None
-                while channel is None:
-                    channel = await self.signaling_client('JOIN', session_code, SERVER_URL, self.name)
-                    if channel is None:
-                        break
-                if channel is None:
+            if choice == "0":
+                self.create = True
+                self.room = input("Enter a 6-character room code to create:\n").strip()
+                if len(self.room) != 6:
+                    print("Room code must be exactly 6 characters.")
                     continue
-                return channel
+                self.password = input("Enter password:\n").strip()
+                break
+            elif choice == "1":
+                self.create = False
+                self.room = input("Enter the 6-character room code to join:\n").strip()
+                if len(self.room) != 6:
+                    print("Room code must be exactly 6 characters.")
+                    continue
+                self.password = input("Enter password:\n").strip()
+                break
 
-    # ---------- Main ----------
-    def run(self):
-        asyncio.run(self._run_async())
+        await self.ws.send(json.dumps({
+            "type": "join",
+            "room": self.room,
+            "from": self.name,
+            "password": self.password,
+            "create": self.create
+        }))
 
-    async def _run_async(self):
-        await self.open_connection_async()
-        await asyncio.gather(
-            self.sending_messages_async(),
-            self.check_timeout_async()
-        )
+        async for raw in self.ws:
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+            if data.get("type") == "error":
+                print("Server error:", data.get("message"))
+                await self.ws.close()
+                return False
+            elif data.get("type") == "joined":
+                print(f"Joined room {data.get('room')}")
+                break
+        return True
+
+    async def async_input_loop(self, channel):
+        loop = asyncio.get_event_loop()
+        while True:
+            msg = await loop.run_in_executor(None, sys.stdin.readline)
+            if not msg:
+                break
+            msg = msg.strip()
+            if msg.lower() in ("exit", "quit"):
+                await self.ws.send(json.dumps({"type": "bye", "from": self.name}))
+                await self.ws.close()
+                await self.pc.close()
+                break
+            channel.send(f"{self.name}: {msg}")
+
+    async def run(self):
+        server_url = self.get_server_info()
+        await self.connect_server(server_url)
+
+        joined = await self.join_room()
+        if not joined:
+            return
+
+        # handle local data channel
+        channel = self.pc.createDataChannel("chat")
+
+        @channel.on("open")
+        def on_open():
+            logging.info("DataChannel open — start typing messages")
+            asyncio.create_task(self.async_input_loop(channel))
+
+        @channel.on("message")
+        def on_message(message):
+            print(f"<< {message}")
+
+        @self.pc.on("iceconnectionstatechange")
+        def on_ice_state():
+            print("ICE state:", self.pc.iceConnectionState)
+
+        # Listen to server messages continuously
+        async for raw in self.ws:
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+            t = data.get("type")
+            if t == "offer" and data.get("from") != self.name and data.get("room") == self.room:
+                # received offer, create answer
+                offer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
+                await self.pc.setRemoteDescription(offer_desc)
+                answer = await self.pc.createAnswer()
+                await self.pc.setLocalDescription(answer)
+                await self.ws.send(json.dumps({
+                    "type": "answer",
+                    "room": self.room,
+                    "from": self.name,
+                    "sdp": self.pc.localDescription.sdp,
+                    "sdpType": self.pc.localDescription.type
+                }))
+            elif t == "answer" and data.get("from") != self.name and data.get("room") == self.room:
+                # received answer for our offer
+                answer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
+                await self.pc.setRemoteDescription(answer_desc)
+            elif t == "bye":
+                logging.info("Peer said BYE — exiting")
+                break
+
+        await self.pc.close()
 
 
-if __name__ == '__main__':
-    client = CrypticClient()
-    client.run()
+if __name__ == "__main__":
+    try:
+        asyncio.run(ChatClient().run())
+    except KeyboardInterrupt:
+        pass
