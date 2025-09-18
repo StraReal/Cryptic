@@ -37,7 +37,7 @@ async def websocket_handler(request):
                 if t == "join":
                     room_code = data.get("room")
                     username = data.get("from")
-                    password = data.get("password", "")
+                    password = hash(data.get("password", ""))
                     create = bool(data.get("create", False))
 
                     if create:
