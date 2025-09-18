@@ -1,112 +1,137 @@
-import asyncio
+import json
+import logging
 from aiohttp import web
 import pathlib
 
-# rooms = { room_code: { 'peers': { username: peer_addr }, 'saved': bool } }
-rooms = {}
+logging.basicConfig(level=logging.INFO)
 
-def delete_room(room_code: str):
-    """Remove a room from memory."""
-    del rooms[room_code]
-    print(f"[SERVER] ROOM_DELETED {room_code}")
+routes = web.RouteTableDef()
 
 BASE_DIR = pathlib.Path(__file__).parent
 INDEX_FILE = BASE_DIR / "index.html"
 
+# rooms: { room_code: { "peers": set(ws), "names": {ws: username}, "password": str,
+#                        "pending_offer": dict, "pending_answer": dict } }
+rooms = {}
+
+
+@routes.get('/ws')
+async def websocket_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    current_room = None
+    current_name = None
+
+    try:
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                except Exception as e:
+                    logging.warning("Invalid JSON: %s", e)
+                    continue
+
+                t = data.get("type")
+
+                if t == "join":
+                    room_code = data.get("room")
+                    username = data.get("from")
+                    password = data.get("password", "")
+                    create = bool(data.get("create", False))
+
+                    if create:
+                        if room_code in rooms:
+                            await ws.send_str(json.dumps({"type": "error",
+                                                          "message": "Room already exists"}))
+                            continue
+                        rooms[room_code] = {
+                            "peers": {ws},
+                            "names": {ws: username},
+                            "password": password,
+                            "pending_offer": None,
+                            "pending_answer": None
+                        }
+                        current_room = room_code
+                        current_name = username
+                        logging.info("Room %s created by %s", room_code, username)
+                        await ws.send_str(json.dumps({"type": "joined", "room": room_code, "offerer": True }))
+                    else:
+                        room = rooms.get(room_code)
+                        if not room:
+                            await ws.send_str(json.dumps({"type": "error",
+                                                          "message": "Room not found"}))
+                            continue
+                        if room["password"] != password:
+                            await ws.send_str(json.dumps({"type": "error",
+                                                          "message": "Incorrect password"}))
+                            continue
+                        room["peers"].add(ws)
+                        room["names"][ws] = username
+                        current_room = room_code
+                        current_name = username
+                        logging.info("%s joined room %s", username, room_code)
+                        await ws.send_str(json.dumps({"type": "joined", "room": room_code, "offerer": False }))
+
+                        # send pending offer if it exists
+                        if room.get("pending_offer"):
+                            await ws.send_str(json.dumps(room["pending_offer"]))
+
+                        # send pending answer if it exists (rare, but just in case)
+                        if room.get("pending_answer"):
+                            await ws.send_str(json.dumps(room["pending_answer"]))
+
+                elif t in ("offer", "answer", "ice", "bye"):
+                    if current_room and current_room in rooms:
+                        room = rooms[current_room]
+
+                        # store pending offer/answer for late joiners
+                        if t == "offer":
+                            room["pending_offer"] = dict(data)
+                        elif t == "answer":
+                            room["pending_answer"] = dict(data)
+
+                        for peer in list(room["peers"]):
+                            if peer is not ws and not peer.closed:
+                                payload = dict(data)
+                                payload["from"] = current_name
+                                payload["room"] = current_room
+                                if t in ("offer", "answer"):
+                                    logging.info("Relaying %s from %s to %s in room %s",
+                                                 t, current_name,
+                                                 room["names"].get(peer, "<unknown>"),
+                                                 current_room)
+                                await peer.send_str(json.dumps(payload))
+                else:
+                    logging.warning("Unknown message type: %s", t)
+
+            elif msg.type == web.WSMsgType.ERROR:
+                logging.error('ws connection closed with exception %s', ws.exception())
+
+    finally:
+        if current_room and current_room in rooms:
+            room = rooms[current_room]
+            room["peers"].discard(ws)
+            room["names"].pop(ws, None)
+            # clear pending offer/answer if room is empty
+            if not room["peers"]:
+                del rooms[current_room]
+                logging.info("Room %s deleted (empty)", current_room)
+            else:
+                logging.info("%s left room %s", current_name, current_room)
+
+    return ws
+
+
 async def index(request: web.Request):
     return web.FileResponse(INDEX_FILE)
 
-async def remove_room_after_timeout(room_code: str, timeout: int = 3600):
-    """Deletes a room after 'timeout' seconds if it is not marked as saved."""
-    await asyncio.sleep(timeout)
-    room = rooms.get(room_code)
-    if room:
-        print(f"[SERVER] ROOM_TIMEOUT {room_code}")
-        delete_room(room_code)
-
-# ----------------------  HTTP ENDPOINTS  ----------------------
-
-async def create_room(request: web.Request):
-    """
-    Create a new room.
-    Parameters: room_code, username, peer_ip (via GET or POST).
-    """
-    params = request.rel_url.query
-    room_code = params.get("room_code")
-    username = params.get("username")
-    peer_ip = params.get("peer_ip")
-    peer_port = params.get("peer_port")
-
-    if not room_code or not username or not peer_ip or not peer_port:
-        return web.json_response({"error": "missing parameters"}, status=400)
-
-    peer_addr = f"{peer_ip}:{peer_port}"
-
-    if room_code in rooms:
-        msg = f"ROOM_TAKEN {room_code} {peer_addr}"
-        print(f"[SERVER] {msg}")
-        return web.json_response({"error": msg}, status=409)
-
-    rooms[room_code] = {"peers": {username: peer_addr}, "saved": False}
-    msg = f"ROOM_CREATED {room_code} {peer_addr}"
-    print(f"[SERVER] {msg}")
-
-    # auto-remove after 1 hour
-    asyncio.create_task(remove_room_after_timeout(room_code))
-
-    return web.json_response({"status": msg})
-
-async def join_room(request: web.Request):
-    """
-    Join an existing room.
-    Parameters: room_code, username, peer_ip
-    """
-    params = request.rel_url.query
-    room_code = params.get("room_code")
-    username = params.get("username")
-    peer_ip   = params.get("peer_ip")
-    peer_port = params.get("peer_port")
-
-    if not room_code or not username or not peer_ip:
-        return web.json_response({"error": "missing parameters"}, status=400)
-
-    peer_addr = f"{peer_ip}:{peer_port}"
-
-    if room_code not in rooms:
-        msg = f"ROOM_INEXISTENT {room_code} {peer_addr}"
-        print(f"[SERVER] {msg}")
-        return web.json_response({"error": msg}, status=404)
-
-    room = rooms[room_code]
-    room["peers"][username] = peer_addr
-    msg = f"JOIN_ROOM {room_code} {peer_addr}"
-    print(f"[SERVER] {msg}")
-
-    # if there are at least 2 peers → mark room as "saved"
-    if len(room["peers"]) >= 2:
-        room["saved"] = True
-
-    # return list of peers (username → address) so the client knows who is inside
-    return web.json_response({
-        "status": msg,
-        "peers": room["peers"]
-    })
-
-async def list_rooms(request: web.Request):
-    """Return a list of active rooms (for debugging/monitoring)."""
-    return web.json_response({
-        code: {"peers": list(info["peers"].keys()), "saved": info["saved"]}
-        for code, info in rooms.items()
-    })
-
-# ----------------------  SERVER SETUP  ----------------------
 
 app = web.Application()
-app.router.add_get("/", index)
-app.router.add_get("/room/new", create_room)
-app.router.add_get("/room/join", join_room)
-app.router.add_get("/rooms", list_rooms)  # debug/monitoring
+app.add_routes(routes)
 app.router.add_static('/static/', path='static', name='static')
+app.router.add_get("/", index)
+app.router.add_get("/ws", websocket_handler)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     web.run_app(app, host="0.0.0.0", port=5000)
