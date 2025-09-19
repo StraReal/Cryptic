@@ -40,6 +40,7 @@ cd client
 ```bash
 pip install -r requirements.txt
 ```
+Since Tkinter is used, if you're running the code on Linux you're gonna need to install it separately from Python
 3. Run the client:
 ```bash
 python client.py
