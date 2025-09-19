@@ -10,8 +10,16 @@ routes = web.RouteTableDef()
 BASE_DIR = pathlib.Path(__file__).parent
 INDEX_FILE = BASE_DIR / "index.html"
 
-# rooms: { room_code: { "peers": set(ws), "names": {ws: username}, "password": str,
-#                        "pending_offer": dict, "pending_answer": dict } }
+# rooms:
+# {
+#   room_code: {
+#       "peers": set(ws),
+#       "names": {ws: username},
+#       "host_ws": ws,
+#       "host_user": username,
+#       "password": str
+#   }
+# }
 rooms = {}
 
 
@@ -41,67 +49,96 @@ async def websocket_handler(request):
                     create = bool(data.get("create", False))
 
                     if create:
+                        # ---- CREATE ROOM ----
                         if room_code in rooms:
-                            await ws.send_str(json.dumps({"type": "error",
-                                                          "message": "Room already exists"}))
+                            await ws.send_str(json.dumps({
+                                "type": "error",
+                                "message": "Room already exists"
+                            }))
                             continue
                         rooms[room_code] = {
                             "peers": {ws},
                             "names": {ws: username},
-                            "password": password,
-                            "pending_offer": None,
-                            "pending_answer": None
+                            "host_ws": ws,
+                            "host_user": username,
+                            "password": password
                         }
                         current_room = room_code
                         current_name = username
                         logging.info("Room %s created by %s", room_code, username)
-                        await ws.send_str(json.dumps({"type": "joined", "room": room_code, "offerer": True }))
+                        # confirm to the host that room is created
+                        await ws.send_str(json.dumps({
+                            "type": "created",
+                            "room": room_code
+                        }))
+
                     else:
+                        # ---- JOIN ROOM ----
                         room = rooms.get(room_code)
                         if not room:
-                            await ws.send_str(json.dumps({"type": "error",
-                                                          "message": "Room not found"}))
+                            await ws.send_str(json.dumps({
+                                "type": "error",
+                                "message": "Room not found"
+                            }))
                             continue
                         if room["password"] != password:
-                            await ws.send_str(json.dumps({"type": "error",
-                                                          "message": "Incorrect password"}))
+                            await ws.send_str(json.dumps({
+                                "type": "error",
+                                "message": "Incorrect password"
+                            }))
                             continue
+
                         room["peers"].add(ws)
                         room["names"][ws] = username
                         current_room = room_code
                         current_name = username
+                        host_user = room.get("host_user")
                         logging.info("%s joined room %s", username, room_code)
-                        await ws.send_str(json.dumps({"type": "joined", "room": room_code, "offerer": False }))
 
-                        # send pending offer if it exists
-                        if room.get("pending_offer"):
-                            await ws.send_str(json.dumps(room["pending_offer"]))
+                        # tell the joining user they joined successfully
+                        await ws.send_str(json.dumps({
+                            "type": "joined",
+                            "room": room_code,
+                            "user": host_user
+                        }))
 
-                        # send pending answer if it exists (rare, but just in case)
-                        if room.get("pending_answer"):
-                            await ws.send_str(json.dumps(room["pending_answer"]))
+                        # tell the host that someone joined, also an offer request
+                        host_ws = room.get("host_ws")
+                        if host_ws and not host_ws.closed:
+                            await host_ws.send_str(json.dumps({
+                                "type": "gotjoined",
+                                "room": room_code,
+                                "user": username
+                            }))
 
                 elif t in ("offer", "answer", "ice", "bye"):
                     if current_room and current_room in rooms:
                         room = rooms[current_room]
-
-                        # store pending offer/answer for late joiners
-                        if t == "offer":
-                            room["pending_offer"] = dict(data)
-                        elif t == "answer":
-                            room["pending_answer"] = dict(data)
-
-                        for peer in list(room["peers"]):
-                            if peer is not ws and not peer.closed:
+                        # if message has a "to", relay only to that peer
+                        target_name = data.get("to")
+                        if target_name:
+                            target_ws = None
+                            for peer_ws, name in room["names"].items():
+                                if name == target_name:
+                                    target_ws = peer_ws
+                                    break
+                            if target_ws and not target_ws.closed:
                                 payload = dict(data)
                                 payload["from"] = current_name
                                 payload["room"] = current_room
-                                if t in ("offer", "answer"):
-                                    logging.info("Relaying %s from %s to %s in room %s",
-                                                 t, current_name,
-                                                 room["names"].get(peer, "<unknown>"),
-                                                 current_room)
-                                await peer.send_str(json.dumps(payload))
+                                logging.info("Relaying %s from %s to %s in room %s",
+                                             t, current_name, target_name, current_room)
+                                await target_ws.send_str(json.dumps(payload))
+                        else:
+                            # otherwise send only to the host
+                            host_ws = room.get("host_ws")
+                            if host_ws and host_ws is not ws and not host_ws.closed:
+                                payload = dict(data)
+                                payload["from"] = current_name
+                                payload["room"] = current_room
+                                logging.info("Relaying %s from %s to host in room %s",
+                                             t, current_name, current_room)
+                                await host_ws.send_str(json.dumps(payload))
                 else:
                     logging.warning("Unknown message type: %s", t)
 
@@ -113,10 +150,10 @@ async def websocket_handler(request):
             room = rooms[current_room]
             room["peers"].discard(ws)
             room["names"].pop(ws, None)
-            # clear pending offer/answer if room is empty
-            if not room["peers"]:
+            # if host disconnects or room empty -> delete room
+            if ws is room.get("host_ws") or not room["peers"]:
                 del rooms[current_room]
-                logging.info("Room %s deleted (empty)", current_room)
+                logging.info("Room %s deleted (host left or empty)", current_room)
             else:
                 logging.info("%s left room %s", current_name, current_room)
 

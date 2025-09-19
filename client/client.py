@@ -16,8 +16,11 @@ def to_websocket_url(url):
     """
     scheme, rest = url.split("://", 1)
     ws_scheme = "wss" if scheme == "https" else "ws"
-    # Remove trailing slashes and always append '/ws'
     return f"{ws_scheme}://{rest.rstrip('/')}/ws"
+
+# Async input helper
+async def aio_input():
+    return await asyncio.to_thread(input, "> ")
 
 class ChatClient:
     def __init__(self):
@@ -26,9 +29,14 @@ class ChatClient:
         self.room = None
         self.password = ""
         self.create = False
+        self.ishost = False  # Set True for host
         self.load_config()
-        self.pc = RTCPeerConnection()
+        self.peers = {}       # peer_id -> RTCPeerConnection
+        self.channels = {}    # peer_id -> DataChannel
+        self.channel_open = False
+        self.ws = None
 
+    # -----------------------------
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, "r") as f:
@@ -39,6 +47,45 @@ class ChatClient:
     def save_config(self):
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.config, f)
+
+    async def listen_server(self):
+        async for raw in self.ws:
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+            t = data.get("type")
+            if t == "error":
+                print("Server error:", data.get("message"))
+            elif t == "created":
+                print("Room created")
+            # Setup connections
+            elif t == "gotjoined":
+                if self.ishost:
+                    user = data.get("user")
+                    print(f"{user} joined the room")
+                    # Connect to all peers in room
+                    new_peer = user
+                    if new_peer:
+                        logging.info("Received offer_request for %s — creating PEER connection", new_peer)
+                        await self.setup_host_peer(new_peer)
+            elif t == 'joined':
+                host_id = data.get("user")
+                print(f"Joined room {data.get('room')} (host: {host_id})")
+                await self.setup_client_peer(host_id)
+
+            elif t in ("offer", "answer"):
+                sender = data.get("from")
+                if sender != self.name:
+                    await self.handle_signaling(sender, data)
+
+            elif t == "bye":
+                logging.info("Peer said BYE — exiting")
+                break
+
+        # Close all connections
+        for pc in self.peers.values():
+            await pc.close()
 
     def get_server_info(self):
         if "server_url" in self.config:
@@ -67,6 +114,7 @@ class ChatClient:
     async def connect_server(self, url):
         self.ws = await websockets.connect(to_websocket_url(url))
 
+    # -----------------------------
     async def join_room(self):
         self.name = input("What username do you want to use?\n")
         while True:
@@ -78,6 +126,7 @@ class ChatClient:
                     print("Room code must be exactly 6 characters.")
                     continue
                 self.password = input("Enter password:\n").strip()
+                self.ishost = True
                 break
             elif choice == "1":
                 self.create = False
@@ -86,6 +135,7 @@ class ChatClient:
                     print("Room code must be exactly 6 characters.")
                     continue
                 self.password = input("Enter password:\n").strip()
+                self.ishost = False
                 break
 
         await self.ws.send(json.dumps({
@@ -95,21 +145,9 @@ class ChatClient:
             "password": self.password,
             "create": self.create
         }))
+        return
 
-        # Wait for the server's joined/error message
-        async for raw in self.ws:
-            try:
-                data = json.loads(raw)
-            except Exception:
-                continue
-            if data.get("type") == "error":
-                print("Server error:", data.get("message"))
-                await self.ws.close()
-                return None
-            elif data.get("type") == "joined":
-                print(f"Joined room {data.get('room')}")
-                return data  #pass the full message back to run()
-
+    # -----------------------------
     async def async_input_loop(self, channel):
         loop = asyncio.get_event_loop()
         while True:
@@ -120,88 +158,125 @@ class ChatClient:
             if msg.lower() in ("exit", "quit"):
                 await self.ws.send(json.dumps({"type": "bye", "from": self.name}))
                 await self.ws.close()
-                await self.pc.close()
+                # Close all peer connections
+                for pc in self.peers.values():
+                    await pc.close()
                 break
-            channel.send(f"[{self.name}] {msg}")
+            if self.ishost:
+                for other_id, ch in self.channels.items():
+                    ch.send(f"[{self.name}] {msg}")
+                pass
+            else:
+                # Non-host sends to host
+                channel.send(f"[{self.name}] {msg}")
 
+    # -----------------------------
     async def run(self):
         server_url = self.get_server_info()
         await self.connect_server(server_url)
+        await self.join_room()
+        await self.listen_server()
+        # -----------------------------
 
-        # Join the room and get the server's joined data
-        joined_data = await self.join_room()
-        print(joined_data)
-        if not joined_data:
+    # -----------------------------
+    # Host setup
+    async def setup_host_peer(self, peer_id):
+        if peer_id in self.peers:
+            logging.info("setup_host_peer: pc for %s already exists", peer_id)
             return
+        pc = RTCPeerConnection()
+        self.peers[peer_id] = pc
+        channel = pc.createDataChannel("chat")
+        self.channels[peer_id] = channel
 
-        # handle local data channel
-        channel = self.pc.createDataChannel("chat")
+        @pc.on("datachannel")
+        def on_datachannel(channel):
+            @channel.on("message")
+            def on_message(msg):
+                # Relay to all other peers
+                print(msg)
+                for other_id, ch in self.channels.items():
+                    if other_id != peer_id:
+                        ch.send(msg)
 
         @channel.on("open")
         def on_open():
-            logging.info("DataChannel open — start typing messages")
-            asyncio.create_task(self.async_input_loop(channel))
-            channel.send('Hi peer!')
+            logging.info(f"Channel open with {peer_id}")
+            if not self.channel_open:
+                asyncio.create_task(self.async_input_loop(channel))
+            self.channel_open = True
 
-        @self.pc.on("datachannel")
+        @pc.on("iceconnectionstatechange")
+        def on_ice_state():
+            logging.info(f"ICE state with {peer_id}: {pc.iceConnectionState}")
+
+        offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+        await self.ws.send(json.dumps({
+            "type": "offer",
+            "room": self.room,
+            "from": self.name,
+            "to": peer_id,
+            "sdp": pc.localDescription.sdp,
+            "sdpType": pc.localDescription.type
+        }))
+    # -----------------------------
+    # Client setup
+    async def setup_client_peer(self, host_id):
+        print('Got here #1')
+        pc = RTCPeerConnection()
+        self.peers[host_id] = pc
+        print('Got here #2')
+        channel = pc.createDataChannel("chat")
+        self.channels[host_id] = channel
+        print('Got here #3')
+
+        @channel.on("open")
+        def on_open():
+            logging.info("DataChannel open to host — start typing messages")
+            asyncio.create_task(self.async_input_loop(channel))
+            channel.send(f"[{self.name}] Joined the room")
+
+        @pc.on("datachannel")
         def on_datachannel(channel):
             @channel.on("message")
             def on_message(msg):
                 print(msg)
 
-        @self.pc.on("iceconnectionstatechange")
+        @pc.on("iceconnectionstatechange")
         def on_ice_state():
-            print("ICE state:", self.pc.iceConnectionState)
+            logging.info(f"ICE state with host: {pc.iceConnectionState}")
 
-        # If we are the offerer, create and send the offer immediately
-        if joined_data.get("offerer"):
-            offer = await self.pc.createOffer()
-            await self.pc.setLocalDescription(offer)
+        print('Got here #4')
+    # -----------------------------
+    async def handle_signaling(self, peer_id, data):
+        pc = self.peers.get(peer_id)
+        if not pc:
+            logging.warning(f"No PC found for {peer_id}")
+            return
+
+        t = data["type"]
+        if t == "offer":
+            offer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
+            await pc.setRemoteDescription(offer_desc)
+            answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
             await self.ws.send(json.dumps({
-                "type": "offer",
+                "type": "answer",
                 "room": self.room,
                 "from": self.name,
-                "sdp": self.pc.localDescription.sdp,
-                "sdpType": self.pc.localDescription.type
+                "to": peer_id,
+                "sdp": pc.localDescription.sdp,
+                "sdpType": pc.localDescription.type
             }))
+        elif t == "answer":
+            answer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
+            await pc.setRemoteDescription(answer_desc)
 
-        # Main message loop
-        async for raw in self.ws:
-            try:
-                data = json.loads(raw)
-            except Exception:
-                continue
-            t = data.get("type")
-
-            # handle incoming offer from another peer
-            if t == "offer" and data.get("from") != self.name and data.get("room") == self.room:
-                offer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
-                await self.pc.setRemoteDescription(offer_desc)
-                answer = await self.pc.createAnswer()
-                await self.pc.setLocalDescription(answer)
-                await self.ws.send(json.dumps({
-                    "type": "answer",
-                    "room": self.room,
-                    "from": self.name,
-                    "sdp": self.pc.localDescription.sdp,
-                    "sdpType": self.pc.localDescription.type
-                }))
-
-            # handle incoming answer for our offer
-            elif t == "answer" and data.get("from") != self.name and data.get("room") == self.room:
-                answer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
-                await self.pc.setRemoteDescription(answer_desc)
-
-            # handle BYE
-            elif t == "bye":
-                logging.info("Peer said BYE — exiting")
-                break
-
-        await self.pc.close()
-
-
+# -----------------------------
 if __name__ == "__main__":
     try:
         asyncio.run(ChatClient().run())
     except KeyboardInterrupt:
         pass
+
