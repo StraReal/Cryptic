@@ -5,6 +5,27 @@ import os
 import sys
 from aiortc import RTCPeerConnection, RTCSessionDescription
 import websockets
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+import base64
+
+def generate_rsa_keys():
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048
+    )
+    public_key = private_key.public_key()
+    return private_key, public_key
+
+# serialize public key to send it
+def serialize_public_key(pubkey):
+    return pubkey.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,8 +54,10 @@ class ChatClient:
         self.load_config()
         self.peers = {}       # peer_id -> RTCPeerConnection
         self.channels = {}    # peer_id -> DataChannel
+        self.keys = {}
         self.channel_open = False
         self.ws = None
+        self.rsapriv, self.rsapub = generate_rsa_keys()
 
     # -----------------------------
     def load_config(self):
@@ -48,6 +71,15 @@ class ChatClient:
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.config, f)
 
+    def encrypt_message(self, peer_id, plaintext):
+        fernet = Fernet(self.keys[peer_id])
+        token = fernet.encrypt(plaintext.encode())  # returns base64 bytes
+        return token.decode("ascii")  # JSON-friendly string
+
+    def decrypt_message(self, peer_id, token):
+        fernet = Fernet(self.keys[peer_id])
+        return fernet.decrypt(token.encode("ascii")).decode("utf-8")
+
     async def listen_server(self):
         async for raw in self.ws:
             try:
@@ -58,7 +90,7 @@ class ChatClient:
             if t == "error":
                 print("Server error:", data.get("message"))
             elif t == "created":
-                print("Room created")
+                print(f"Room {data.get('room')} created")
             # Setup connections
             elif t == "gotjoined":
                 if self.ishost:
@@ -148,7 +180,7 @@ class ChatClient:
         return
 
     # -----------------------------
-    async def async_input_loop(self, channel):
+    async def async_input_loop(self, host_id = None):
         loop = asyncio.get_event_loop()
         while True:
             msg = await loop.run_in_executor(None, sys.stdin.readline)
@@ -164,11 +196,11 @@ class ChatClient:
                 break
             if self.ishost:
                 for other_id, ch in self.channels.items():
-                    ch.send(f"[{self.name}] {msg}")
-                pass
+                    encrypted = self.encrypt_message(other_id, f"[{self.name}] {msg}")
+                    ch.send(encrypted)
             else:
-                # Non-host sends to host
-                channel.send(f"[{self.name}] {msg}")
+                encrypted = self.encrypt_message(host_id, f"[{self.name}] {msg}")
+                self.channels[host_id].send(encrypted)
 
     # -----------------------------
     async def run(self):
@@ -194,16 +226,18 @@ class ChatClient:
             @channel.on("message")
             def on_message(msg):
                 # Relay to all other peers
-                print(msg)
+                plaintext = self.decrypt_message(peer_id, msg)
+                print(plaintext)
                 for other_id, ch in self.channels.items():
                     if other_id != peer_id:
-                        ch.send(msg)
+                        ch.send(self.encrypt_message(other_id, plaintext))
 
         @channel.on("open")
         def on_open():
             logging.info(f"Channel open with {peer_id}")
             if not self.channel_open:
-                asyncio.create_task(self.async_input_loop(channel))
+                asyncio.create_task(self.async_input_loop())
+            channel.send(self.encrypt_message(peer_id, f"{self.name} is hosting the room"))
             self.channel_open = True
 
         @pc.on("iceconnectionstatechange")
@@ -218,36 +252,35 @@ class ChatClient:
             "from": self.name,
             "to": peer_id,
             "sdp": pc.localDescription.sdp,
-            "sdpType": pc.localDescription.type
+            "sdpType": pc.localDescription.type,
+            "pubKey": serialize_public_key(self.rsapub).decode("ascii")
         }))
     # -----------------------------
     # Client setup
     async def setup_client_peer(self, host_id):
-        print('Got here #1')
         pc = RTCPeerConnection()
         self.peers[host_id] = pc
-        print('Got here #2')
         channel = pc.createDataChannel("chat")
         self.channels[host_id] = channel
-        print('Got here #3')
+        key = Fernet.generate_key()
+        self.keys[host_id] = key
 
         @channel.on("open")
         def on_open():
             logging.info("DataChannel open to host — start typing messages")
-            asyncio.create_task(self.async_input_loop(channel))
-            channel.send(f"[{self.name}] Joined the room")
+            asyncio.create_task(self.async_input_loop(host_id))
+            channel.send(self.encrypt_message(host_id, f"[{self.name}] Joined the room"))
 
         @pc.on("datachannel")
         def on_datachannel(channel):
             @channel.on("message")
             def on_message(msg):
-                print(msg)
+                plaintext = self.decrypt_message(host_id, msg)
+                print(plaintext)
 
         @pc.on("iceconnectionstatechange")
         def on_ice_state():
             logging.info(f"ICE state with host: {pc.iceConnectionState}")
-
-        print('Got here #4')
     # -----------------------------
     async def handle_signaling(self, peer_id, data):
         pc = self.peers.get(peer_id)
@@ -258,6 +291,22 @@ class ChatClient:
         t = data["type"]
         if t == "offer":
             offer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
+            peer_pubkey_bytes = data["pubKey"].encode("ascii")
+            peer_rsapub = serialization.load_pem_public_key(peer_pubkey_bytes)
+
+            # encrypt it with peer's RSA public key
+            encrypted_key = peer_rsapub.encrypt(
+                self.keys[peer_id],
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
+            )
+
+            # Base64 encode to send via JSON/WebSocket
+            encrypted_key_b64 = base64.b64encode(encrypted_key).decode("ascii")
+
             await pc.setRemoteDescription(offer_desc)
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
@@ -267,10 +316,23 @@ class ChatClient:
                 "from": self.name,
                 "to": peer_id,
                 "sdp": pc.localDescription.sdp,
-                "sdpType": pc.localDescription.type
+                "sdpType": pc.localDescription.type,
+                "fernetKey": encrypted_key_b64
             }))
         elif t == "answer":
             answer_desc = RTCSessionDescription(sdp=data["sdp"], type=data["sdpType"])
+            encrypted_key_bytes = base64.b64decode(data["fernetKey"])
+            fernet_key = self.rsapriv.decrypt(
+                encrypted_key_bytes,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
+            )
+
+            # now create a Fernet object for this peer
+            self.keys[peer_id] = fernet_key
             await pc.setRemoteDescription(answer_desc)
 
 # -----------------------------
