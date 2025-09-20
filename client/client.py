@@ -269,7 +269,7 @@ class ChatClient:
         def on_open():
             logging.info("DataChannel open to host — start typing messages")
             asyncio.create_task(self.async_input_loop(host_id))
-            channel.send(self.encrypt_message(host_id, f"[{self.name}] Joined the room"))
+            channel.send(self.encrypt_message(host_id, f"{self.name} joined the room"))
 
         @pc.on("datachannel")
         def on_datachannel(channel):
