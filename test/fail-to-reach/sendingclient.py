@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
+from aiortc import RTCPeerConnection, RTCSessionDescription
 import websockets
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -14,9 +14,6 @@ import base64
 import shlex
 import tkinter as tk
 from tkinter import filedialog
-
-stun_server = RTCIceServer(urls="stun:stun.l.google.com:19302")
-config = RTCConfiguration(iceServers=[stun_server])
 
 def generate_rsa_keys():
     private_key = rsa.generate_private_key(
@@ -68,6 +65,7 @@ class ChatClient:
             "sendfile": self.cmd_sendfile
         }
         self.host_id = None
+        self.msgcount = 0
 
     # -----------------------------
     def load_config(self):
@@ -152,7 +150,7 @@ class ChatClient:
                     self.save_config()
                     return server_url
         else:
-            server_url = input("Enter server URL: ").strip()
+            server_url = input("Enter WebSocket URL: ").strip()
             self.config["server_url"] = server_url
             self.save_config()
             return server_url
@@ -197,17 +195,7 @@ class ChatClient:
     async def async_input_loop(self):
         loop = asyncio.get_event_loop()
         while True:
-            msg = await loop.run_in_executor(None, sys.stdin.readline)
-            if not msg:
-                break
-            msg = msg.strip()
-            if msg.startswith('/'):
-                parts = shlex.split(msg)  # ["/command", "arg 1", "arg2", exc...]
-                cmd = parts[0][1:]
-                args = parts[1:]
-                if cmd in self.commands:
-                    await self.commands[cmd](*args)
-                    continue
+            msg = self.msgcount
             if self.ishost:
                 for other_id, ch in self.channels.items():
                     encrypted = self.encrypt_message(other_id, f"[{self.name}] {msg}")
@@ -215,6 +203,7 @@ class ChatClient:
             else:
                 encrypted = self.encrypt_message(self.host_id, f"[{self.name}] {msg}")
                 self.channels[self.host_id].send(encrypted)
+            self.msgcount += 1
 
     # -----------------------------
     async def run(self):
@@ -230,7 +219,7 @@ class ChatClient:
         if peer_id in self.peers:
             logging.info("setup_host_peer: pc for %s already exists", peer_id)
             return
-        pc = RTCPeerConnection(configuration=config)
+        pc = RTCPeerConnection()
         self.peers[peer_id] = pc
         channel = pc.createDataChannel("chat")
         self.channels[peer_id] = channel
@@ -273,7 +262,7 @@ class ChatClient:
     # Client setup
     async def setup_client_peer(self, host_id):
         self.host_id = host_id
-        pc = RTCPeerConnection(configuration=config)
+        pc = RTCPeerConnection()
         self.peers[host_id] = pc
         channel = pc.createDataChannel("chat")
         self.channels[host_id] = channel

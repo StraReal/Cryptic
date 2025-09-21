@@ -16,3 +16,4 @@ db.sqlite3
 /client/app/node_modules
 /client/app/dist-electron
 /server/.run/server_Dockerfile.run.xml
+/test/fail-to-reach/config.json
