@@ -11,6 +11,10 @@ import base64
 import shlex
 import sys
 import websockets
+import tkinter as tk
+from tkinter import filedialog
+import tempfile
+from tkinter import messagebox
 
 CONFIG_FILE = "config.json"
 
@@ -32,6 +36,17 @@ def to_websocket_url(url):
     scheme, rest = url.split("://", 1)
     ws_scheme = "wss" if scheme == "https" else "ws"
     return f"{ws_scheme}://{rest.rstrip('/')}/ws"
+
+def get_file_path(filename, b64data):
+    # Temporary dir
+    tmp_dir = tempfile.gettempdir()
+    filepath = os.path.join(tmp_dir, filename)
+
+    # Decode and save
+    with open(filepath, "wb") as f:
+        f.write(base64.b64decode(b64data))
+
+    return filepath
 
 class ChatClient:
     def __init__(self):
@@ -65,9 +80,48 @@ class ChatClient:
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.config, f)
 
-    async def cmd_sendfile(self, *args):
-        print('Function not implemented yet')
-        pass
+    def cmd_sendfile(self, *args):
+        """
+        /sendfile
+        Apre un dialogo per selezionare un file e lo invia criptato
+        """
+        # Apri file picker in modo invisibile
+        root = tk.Tk()
+        root.withdraw()  # niente finestra principale
+        root.attributes("-topmost", True)
+        filepath = filedialog.askopenfilename(title="Select file")
+        root.destroy()
+
+        if not filepath:
+            print("No file selected.")
+            return
+
+        # Legge il file in binario
+        with open(filepath, "rb") as f:
+            data = f.read()
+
+        filename = os.path.basename(filepath)
+
+        # Base64 to make it pass through datachannel as str
+        b64data = base64.b64encode(data).decode("ascii")
+
+        # Build the json payload
+        payload = json.dumps({
+            "type": "file",
+            "name": filename,
+            "content": b64data
+        })
+
+        # Send to peers
+        if self.ishost:
+            for other_id, ch in self.channels.items():
+                encrypted = self.encrypt_message(other_id, f"{payload}")
+                ch.send(encrypted)
+        else:
+            encrypted = self.encrypt_message(self.host_id, f"{payload}")
+            self.channels[self.host_id].send(encrypted)
+
+        print(f"File {filename} sent ({len(data)} bytes).")
 
     def encrypt_message(self, peer_id, plaintext):
         fernet = Fernet(self.keys[peer_id])
@@ -93,7 +147,7 @@ class ChatClient:
             elif t == "gotjoined":
                 if self.ishost:
                     user = data.get("user")
-                    print(f"{user} joined the room")
+                    print(f"{user} is joining the room")
                     # Connect to all peers in room
                     new_peer = user
                     if new_peer:
@@ -190,15 +244,50 @@ class ChatClient:
                 cmd = parts[0][1:]
                 args = parts[1:]
                 if cmd in self.commands:
-                    await self.commands[cmd](*args)
+                    self.commands[cmd](*args)
                     continue
+            payload = json.dumps({
+                "type": "text",
+                "content": f"[{self.name}] {msg}"
+            })
             if self.ishost:
                 for other_id, ch in self.channels.items():
-                    encrypted = self.encrypt_message(other_id, f"[{self.name}] {msg}")
+                    encrypted = self.encrypt_message(other_id, payload)
                     ch.send(encrypted)
             else:
-                encrypted = self.encrypt_message(self.host_id, f"[{self.name}] {msg}")
+                encrypted = self.encrypt_message(self.host_id, payload)
                 self.channels[self.host_id].send(encrypted)
+
+    def handle_message(self, peer_id, msg):
+        """
+            Handles a received message
+            msg = Json ciphertext
+            """
+        decrypted = self.decrypt_message(peer_id, msg)
+
+        msg = self.decrypt_message(peer_id, msg)
+        try:
+            data = json.loads(decrypted)
+        except json.JSONDecodeError:
+            print("Invalid message")
+            return
+
+        match data["type"]:
+            case "text":
+                plaintext = data["content"]
+                print(plaintext)
+            case "file":
+                b64data = data["content"]
+                filename = data["name"]
+                filepath = get_file_path(filename, b64data)
+                print('file:///' + filepath.replace("\\", "/"))
+
+        if self.ishost:
+            # Relay to all other peers
+            for other_id, ch in self.channels.items():
+                if other_id != peer_id:
+                    ch.send(self.encrypt_message(other_id, msg))
+
 
     # -----------------------------
     async def run(self):
@@ -232,19 +321,18 @@ class ChatClient:
         def on_datachannel(channel):
             @channel.on("message")
             def on_message(msg):
-                # Relay to all other peers
-                plaintext = self.decrypt_message(peer_id, msg)
-                print(plaintext)
-                for other_id, ch in self.channels.items():
-                    if other_id != peer_id:
-                        ch.send(self.encrypt_message(other_id, plaintext))
+                self.handle_message(peer_id, msg)
 
         @channel.on("open")
         def on_open():
             logging.info(f"Channel open with {peer_id}")
             if not self.channel_open:
                 asyncio.create_task(self.async_input_loop())
-            channel.send(self.encrypt_message(peer_id, f"{self.name} is hosting the room"))
+            payload = json.dumps({
+                "type": "text",
+                "content": f"{self.name} is hosting the room"
+            })
+            channel.send(self.encrypt_message(peer_id, payload))
             self.channel_open = True
 
         @pc.on("iceconnectionstatechange")
@@ -275,16 +363,18 @@ class ChatClient:
 
         @channel.on("open")
         def on_open():
-            logging.info("DataChannel open to host — start typing messages")
             asyncio.create_task(self.async_input_loop())
-            channel.send(self.encrypt_message(host_id, f"{self.name} joined the room"))
+            payload = json.dumps({
+                "type": "text",
+                "content": f"{self.name} joined the room"
+            })
+            channel.send(self.encrypt_message(host_id, payload))
 
         @pc.on("datachannel")
         def on_datachannel(channel):
             @channel.on("message")
             def on_message(msg):
-                plaintext = self.decrypt_message(host_id, msg)
-                print(plaintext)
+                self.handle_message(host_id, msg)
 
         @pc.on("iceconnectionstatechange")
         def on_ice_state():
