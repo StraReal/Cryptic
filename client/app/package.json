@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.10",
+    "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-separator": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
     "@tailwindcss/vite": "^4.1.13",
     "class-variance-authority": "^0.7.1",
@@ -19,6 +21,7 @@
     "lucide-react": "^0.543.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router": "^7.9.1",
     "shadcn": "^3.2.1",
     "tailwind-merge": "^3.3.1",
     "tailwindcss": "^4.1.13"
