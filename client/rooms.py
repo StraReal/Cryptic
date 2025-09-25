@@ -14,11 +14,16 @@ import websockets
 import tkinter as tk
 from tkinter import filedialog
 import tempfile
-from tkinter import messagebox
 
 CONFIG_FILE = "config.json"
 
 def generate_rsa_keys():
+    """
+    Generate a new RSA private/public key pair.
+
+    Returns:
+        tuple: (private_key, public_key)
+    """
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048
@@ -27,18 +32,46 @@ def generate_rsa_keys():
     return private_key, public_key
 
 def serialize_public_key(pubkey):
+    """
+    Serialize an RSA public key to PEM format.
+
+    Args:
+        pubkey: The RSA public key object.
+
+    Returns:
+        bytes: The serialized public key in PEM format.
+    """
     return pubkey.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     )
 
 def to_websocket_url(url):
+    """
+    Convert an HTTP/HTTPS URL to a WebSocket URL.
+
+    Args:
+        url (str): The HTTP or HTTPS URL.
+
+    Returns:
+        str: The corresponding ws:// or wss:// URL.
+    """
     scheme, rest = url.split("://", 1)
     ws_scheme = "wss" if scheme == "https" else "ws"
     return f"{ws_scheme}://{rest.rstrip('/')}/ws"
 
 def get_file_path(filename, b64data):
-    # Temporary dir
+    """
+    Decode base64 data and save it as a temporary file.
+
+    Args:
+        filename (str): Name of the file to create.
+        b64data (str): Base64-encoded file content.
+
+    Returns:
+        str: Path to the saved temporary file.
+    """
+    # Temporary directory
     tmp_dir = tempfile.gettempdir()
     filepath = os.path.join(tmp_dir, filename)
 
@@ -49,13 +82,21 @@ def get_file_path(filename, b64data):
     return filepath
 
 class ChatClient:
+    """
+    A peer-to-peer chat client that uses WebRTC for real-time communication
+    and RSA/Fernet encryption for secure messaging.
+    """
+
     def __init__(self):
+        """
+        Initialize the chat client and load configuration.
+        """
         self.config = {}
         self.name = None
         self.room = None
         self.password = ""
         self.create = False
-        self.ishost = False  # Set True for host
+        self.ishost = False  # True if this client is the host
         self.load_config()
         self.peers = {}       # peer_id -> RTCPeerConnection
         self.channels = {}    # peer_id -> DataChannel
@@ -68,8 +109,10 @@ class ChatClient:
         }
         self.host_id = None
 
-    # -----------------------------
     def load_config(self):
+        """
+        Load configuration from the CONFIG_FILE if it exists.
+        """
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, "r") as f:
                 self.config = json.load(f)
@@ -77,17 +120,20 @@ class ChatClient:
             self.config = {}
 
     def save_config(self):
+        """
+        Save the current configuration to the CONFIG_FILE.
+        """
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.config, f)
 
     def cmd_sendfile(self, *args):
         """
-        /sendfile
-        Apre un dialogo per selezionare un file e lo invia criptato
+        Command handler: /sendfile
+        Opens a file picker dialog and sends the selected file to peers.
         """
-        # Apri file picker in modo invisibile
+        # Open file picker invisibly
         root = tk.Tk()
-        root.withdraw()  # niente finestra principale
+        root.withdraw()  # hide the main window
         root.attributes("-topmost", True)
         filepath = filedialog.askopenfilename(title="Select file")
         root.destroy()
@@ -96,13 +142,13 @@ class ChatClient:
             print("No file selected.")
             return
 
-        # Legge il file in binario
+        # Read the file in binary
         with open(filepath, "rb") as f:
             data = f.read()
 
         filename = os.path.basename(filepath)
 
-        # Base64 to make it pass through datachannel as str
+        # Base64 encode so it can be sent as a string
         b64data = base64.b64encode(data).decode("ascii")
 
         # Build the json payload
@@ -124,15 +170,38 @@ class ChatClient:
         print(f"File {filename} sent ({len(data)} bytes).")
 
     def encrypt_message(self, peer_id, plaintext):
+        """
+        Encrypt a message using the Fernet key for a peer.
+
+        Args:
+            peer_id (str): ID of the peer.
+            plaintext (str): The plaintext message.
+
+        Returns:
+            str: The encrypted message (base64 string).
+        """
         fernet = Fernet(self.keys[peer_id])
-        token = fernet.encrypt(plaintext.encode())  # returns base64 bytes
-        return token.decode("ascii")  # JSON-friendly string
+        token = fernet.encrypt(plaintext.encode())
+        return token.decode("ascii")
 
     def decrypt_message(self, peer_id, token):
+        """
+        Decrypt a message using the Fernet key for a peer.
+
+        Args:
+            peer_id (str): ID of the peer.
+            token (str): Base64-encoded ciphertext.
+
+        Returns:
+            str: The decrypted plaintext.
+        """
         fernet = Fernet(self.keys[peer_id])
         return fernet.decrypt(token.encode("ascii")).decode("utf-8")
 
     async def listen_server(self):
+        """
+        Listen for messages from the signaling server and handle events.
+        """
         async for raw in self.ws:
             try:
                 data = json.loads(raw)
@@ -172,6 +241,12 @@ class ChatClient:
             await pc.close()
 
     def get_server_info(self):
+        """
+        Retrieve or update the server URL from the configuration or user input.
+
+        Returns:
+            str: The server URL.
+        """
         if "server_url" in self.config:
             print("Where do you want to connect?")
             print("(0) Saved server")
@@ -196,10 +271,18 @@ class ChatClient:
             return server_url
 
     async def connect_server(self, url):
+        """
+        Connect to the signaling server via WebSocket.
+
+        Args:
+            url (str): The server URL.
+        """
         self.ws = await websockets.connect(to_websocket_url(url))
 
-    # -----------------------------
     async def join_room(self):
+        """
+        Prompt the user to create or join a room and send the join request.
+        """
         self.name = input("What username do you want to use?\n")
         while True:
             choice = input("Do you want to create a room (0) or join one (1)?\n")
@@ -231,8 +314,10 @@ class ChatClient:
         }))
         return
 
-    # -----------------------------
     async def async_input_loop(self):
+        """
+        Asynchronous loop to read user input and send messages or execute commands.
+        """
         loop = asyncio.get_event_loop()
         while True:
             msg = await loop.run_in_executor(None, sys.stdin.readline)
@@ -240,7 +325,7 @@ class ChatClient:
                 break
             msg = msg.strip()
             if msg.startswith('/'):
-                parts = shlex.split(msg)  # ["/command", "arg 1", "arg2", exc...]
+                parts = shlex.split(msg)  # ["/command", "arg 1", "arg2", ...]
                 cmd = parts[0][1:]
                 args = parts[1:]
                 if cmd in self.commands:
@@ -260,12 +345,13 @@ class ChatClient:
 
     def handle_message(self, peer_id, msg):
         """
-            Handles a received message
-            msg = Json ciphertext
-            """
-        decrypted = self.decrypt_message(peer_id, msg)
+        Handle a received encrypted message from a peer.
 
-        msg = self.decrypt_message(peer_id, msg)
+        Args:
+            peer_id (str): ID of the peer who sent the message.
+            msg (str): Base64-encoded ciphertext JSON message.
+        """
+        decrypted = self.decrypt_message(peer_id, msg)
         try:
             data = json.loads(decrypted)
         except json.JSONDecodeError:
@@ -288,18 +374,22 @@ class ChatClient:
                 if other_id != peer_id:
                     ch.send(self.encrypt_message(other_id, msg))
 
-
-    # -----------------------------
     async def run(self):
+        """
+        Main entry point: connect to the server, join a room, and listen for events.
+        """
         server_url = self.get_server_info()
         await self.connect_server(server_url)
         await self.join_room()
         await self.listen_server()
-        # -----------------------------
 
-    # -----------------------------
-    # Host setup
     async def setup_host_peer(self, peer_id):
+        """
+        Set up a new peer connection when hosting.
+
+        Args:
+            peer_id (str): The ID of the joining peer.
+        """
         if peer_id in self.peers:
             logging.info("setup_host_peer: pc for %s already exists", peer_id)
             return
@@ -350,9 +440,14 @@ class ChatClient:
             "sdpType": pc.localDescription.type,
             "pubKey": serialize_public_key(self.rsapub).decode("ascii")
         }))
-    # -----------------------------
-    # Client setup
+
     async def setup_client_peer(self, host_id):
+        """
+        Set up the peer connection as a client joining a host.
+
+        Args:
+            host_id (str): ID of the host peer.
+        """
         self.host_id = host_id
         pc = RTCPeerConnection()
         self.peers[host_id] = pc
@@ -379,8 +474,15 @@ class ChatClient:
         @pc.on("iceconnectionstatechange")
         def on_ice_state():
             logging.info(f"ICE state with host: {pc.iceConnectionState}")
-    # -----------------------------
+
     async def handle_signaling(self, peer_id, data):
+        """
+        Handle signaling messages (offer/answer) for WebRTC connection setup.
+
+        Args:
+            peer_id (str): ID of the peer sending the signaling message.
+            data (dict): Signaling message data.
+        """
         pc = self.peers.get(peer_id)
         if not pc:
             logging.warning(f"No PC found for {peer_id}")
@@ -392,7 +494,7 @@ class ChatClient:
             peer_pubkey_bytes = data["pubKey"].encode("ascii")
             peer_rsapub = serialization.load_pem_public_key(peer_pubkey_bytes)
 
-            # encrypt it with peer's RSA public key
+            # Encrypt the Fernet key with the peer's RSA public key
             encrypted_key = peer_rsapub.encrypt(
                 self.keys[peer_id],
                 padding.OAEP(
@@ -429,6 +531,6 @@ class ChatClient:
                 )
             )
 
-            # now create a Fernet object for this peer
+            # Create a Fernet key for this peer
             self.keys[peer_id] = fernet_key
             await pc.setRemoteDescription(answer_desc)
