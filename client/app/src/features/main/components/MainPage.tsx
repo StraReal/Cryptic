@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Copy, RefreshCw, LogIn, PlusCircle } from "lucide-react";
 
-// Simple toast implementation since useToast is not available
+// Simple toast implementation
 const useToast = () => {
   return {
     toast: (options: { title: string; description?: string; variant?: string }) => {
@@ -14,7 +14,7 @@ const useToast = () => {
   };
 };
 
-// Simple cn utility since it's not available
+// Simple cn utility
 const cn = (...classes: (string | undefined)[]) => {
   return classes.filter(Boolean).join(' ');
 };
@@ -30,67 +30,6 @@ interface RoomResult {
   stderr?: string;
 }
 
-const toWebSocketUrl = (url: string) => {
-  const [scheme, rest] = url.split("://");
-  const wsScheme = scheme === "https" ? "wss" : "ws";
-  return `${wsScheme}://${rest.replace(/\/$/, '')}/ws`;
-};
-
-const useWebSocket = (serverUrl: string, onMessage: (data: any) => void) => {
-  const socketRef = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    return () => {
-      socketRef.current?.close();
-    };
-  }, []);
-
-  const connect = () => {
-    return new Promise<void>((resolve, reject) => {
-      try {
-        const wsUrl = toWebSocketUrl(serverUrl);
-        const ws = new WebSocket(wsUrl);
-        socketRef.current = ws;
-
-        ws.onopen = () => {
-          console.log("WebSocket connected");
-          resolve();
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            onMessage(data);
-          } catch (e) {
-            console.error("Failed to parse WebSocket message:", event.data);
-          }
-        };
-
-        ws.onerror = (error) => {
-          console.error("WebSocket error:", error);
-          reject(new Error("WebSocket connection failed."));
-        };
-
-        ws.onclose = () => {
-          console.log("WebSocket disconnected");
-        };
-      } catch (error) {
-        reject(error);
-      }
-    });
-  };
-
-  const sendMessage = (payload: object) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(payload));
-    } else {
-      console.error("WebSocket is not connected.");
-    }
-  };
-
-  return { connect, sendMessage };
-};
-
 const MainPage = () => {
   const { toast } = useToast();
   const [serverUrl, setServerUrl] = useState("https://signalingserverdomain.download");
@@ -103,48 +42,39 @@ const MainPage = () => {
   const [debug, setDebug] = useState(false);
   const [currentView, setCurrentView] = useState<"form" | "result">("form");
 
-  const handleServerMessage = (data: any) => {
-    setLoading(false);
-    switch (data.type) {
-      case "created":
-        setResult({ status: "room_created", room_code: data.room });
-        setCurrentView("result");
-        toast({ title: "Room Created!", description: "Share the room code with others to join." });
-        break;
-      case "joined":
-        setResult({ status: "room_joined", room_code: data.room, message: `Host: ${data.user}` });
-        setCurrentView("result");
-        toast({ title: "Joined Room!", description: `Successfully joined room ${data.room}.` });
-        break;
-      case "error":
-        setResult({ error: data.message });
-        setCurrentView("result"); // Show error on the result page
-        toast({ title: "Error", description: data.message, variant: "destructive" });
-        break;
-      default:
-        console.log("Unhandled message type:", data.type);
-    }
-  };
-
-  const { connect, sendMessage } = useWebSocket(serverUrl, handleServerMessage);
-
   const handleRoomAction = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setResult(null);
 
     try {
-      await connect();
-      sendMessage({
-        type: "join",
-        room: roomCode,
-        from: username,
-        password: password,
+      const action = isCreatingRoom ? "create-room" : "join-room";
+      const res = await window.ipcRenderer.invoke(action, {
+        serverUrl,
+        username,
+        roomCode: roomCode || undefined,
+        password: password || undefined,
         create: isCreatingRoom,
+        debug,
+      });
+
+      setResult(res);
+      setCurrentView("result");
+      
+      toast({
+        title: isCreatingRoom ? "Room created!" : "Joined room!",
+        description: isCreatingRoom 
+          ? "Share the room code with others to join"
+          : `Successfully joined ${roomCode}`,
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Unknown error during connection";
-      toast({ title: "Connection Error", description: errorMessage, variant: "destructive" });
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
       setLoading(false);
     }
   };
@@ -324,6 +254,12 @@ const MainPage = () => {
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {isCreatingRoom ? "Create Room" : "Join Room"}
                 </Button>
+                
+                <div className="text-sm text-muted-foreground text-center">
+                  {isCreatingRoom 
+                    ? "You'll be able to invite others after creation"
+                    : "Make sure you have the correct room code and password"}
+                </div>
               </CardFooter>
             </form>
           </Card>
@@ -333,7 +269,7 @@ const MainPage = () => {
               <CardTitle className="flex items-center justify-between">
                 <span>Room Ready!</span>
                 <span className="font-mono bg-primary/10 px-3 py-1 rounded-md text-primary">
-                  {result?.room_code || roomCode}
+                  {roomCode}
                 </span>
               </CardTitle>
               <CardDescription>
@@ -344,7 +280,90 @@ const MainPage = () => {
             </CardHeader>
             
             <CardContent className="space-y-4">
-              {result?.error ? (
+              <div className="bg-muted/50 p-4 rounded-lg">
+                <h4 className="font-medium mb-2">Connection Details</h4>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Server:</span>
+                    <div className="flex items-center">
+                      <code className="text-sm bg-background px-2 py-1 rounded">
+                        {serverUrl}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => copyToClipboard(serverUrl)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Room Code:</span>
+                    <div className="flex items-center">
+                      <code className="font-mono text-sm bg-background px-2 py-1 rounded">
+                        {roomCode}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => copyToClipboard(roomCode)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  {password && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Password:</span>
+                      <div className="flex items-center">
+                        <code className="font-mono text-sm bg-background px-2 py-1 rounded">
+                          {password.replace(/./g, '•')}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => copyToClipboard(password)}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              {result?.my_ip && (
+                <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                  <h4 className="font-medium text-green-800 dark:text-green-200 mb-2">Direct Connection</h4>
+                  <p className="text-sm text-green-700 dark:text-green-300 mb-2">
+                    Your direct connection details (for advanced users):
+                  </p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-green-800/80 dark:text-green-200/80">IP Address:</span>
+                      <code className="font-mono text-sm bg-green-100 dark:bg-green-900/50 px-2 py-1 rounded">
+                        {result.my_ip}
+                      </code>
+                    </div>
+                    {result.my_port && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-green-800/80 dark:text-green-200/80">Port:</span>
+                        <code className="font-mono text-sm bg-green-100 dark:bg-green-900/50 px-2 py-1 rounded">
+                          {result.my_port}
+                        </code>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {result?.error && (
                 <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-800">
                   <h4 className="font-medium text-red-800 dark:text-red-200">Error</h4>
                   <p className="text-sm text-red-700 dark:text-red-300">{result.error}</p>
@@ -354,51 +373,36 @@ const MainPage = () => {
                     </pre>
                   )}
                 </div>
-              ) : (
-                <div className="bg-muted/50 p-4 rounded-lg">
-                  <h4 className="font-medium mb-2">Connection Details</h4>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Room Code:</span>
-                      <div className="flex items-center">
-                        <code className="font-mono text-sm bg-background px-2 py-1 rounded">
-                          {result?.room_code || roomCode}
-                        </code>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copyToClipboard(result?.room_code || roomCode)}>
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    {password && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-muted-foreground">Password:</span>
-                        <div className="flex items-center">
-                          <code className="font-mono text-sm bg-background px-2 py-1 rounded">
-                            {'*'.repeat(password.length)}
-                          </code>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copyToClipboard(password)}>
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {debug && result?.rawOutput && (
-                <div className="bg-gray-100 dark:bg-gray-800/50 p-4 rounded-lg">
-                  <h4 className="font-medium mb-2">Raw Output</h4>
-                  <pre className="mt-2 p-2 bg-gray-200 dark:bg-gray-900/30 text-xs rounded overflow-auto max-h-40">
-                    {result.rawOutput}
-                  </pre>
-                </div>
               )}
             </CardContent>
             
             <CardFooter className="flex justify-between">
-              <Button variant="outline" onClick={resetForm}>Back</Button>
-              <Button onClick={() => console.log('Open chat for room:', result?.room_code || roomCode)}>Open Chat</Button>
+              <Button
+                variant="outline"
+                onClick={resetForm}
+              >
+                Back
+              </Button>
+              <div className="space-x-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const shareText = `Join my secure chat room!\n\nRoom Code: ${roomCode}\nServer: ${serverUrl}`;
+                    copyToClipboard(shareText);
+                  }}
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy Invite
+                </Button>
+                <Button
+                  onClick={() => {
+                    // TODO: Implement chat view
+                    console.log("Opening chat...");
+                  }}
+                >
+                  Open Chat
+                </Button>
+              </div>
             </CardFooter>
           </Card>
         )}

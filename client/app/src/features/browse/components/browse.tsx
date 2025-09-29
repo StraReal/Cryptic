@@ -14,6 +14,7 @@ import {
   Grid,
   List,
 } from "lucide-react";
+import { useNavigate } from "react-router";
 
 const RoomCard = ({ room, viewMode }) => (
   <Card className="cursor-pointer transition-all duration-200 hover:shadow-lg hover:scale-[1.02] border bg-slate-800 border-slate-700 hover:border-slate-600">
@@ -54,6 +55,7 @@ const RoomCard = ({ room, viewMode }) => (
 );
 
 const ChatRoomsPage = () => {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [viewMode, setViewMode] = useState("grid"); // 'grid' or 'list'
@@ -196,6 +198,7 @@ const ChatRoomsPage = () => {
                   ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
                   : "grid-cols-1 max-w-4xl"
               }`}
+              onClick={() => navigate("/")}
             >
               {filteredRooms.map((room) => (
                 <RoomCard key={room.id} room={room} viewMode={viewMode} />
