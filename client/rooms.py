@@ -14,8 +14,10 @@ import websockets
 import tkinter as tk
 from tkinter import filedialog
 import tempfile
+import math, uuid
 
 CONFIG_FILE = "config.json"
+CHUNK_SIZE = 8000
 
 def generate_rsa_keys():
     """
@@ -60,24 +62,22 @@ def to_websocket_url(url):
     ws_scheme = "wss" if scheme == "https" else "ws"
     return f"{ws_scheme}://{rest.rstrip('/')}/ws"
 
-def get_file_path(filename, b64data):
+def get_file_path(filename, file_bytes):
     """
-    Decode base64 data and save it as a temporary file.
+    Save raw bytes as a temporary file and return the path.
 
     Args:
         filename (str): Name of the file to create.
-        b64data (str): Base64-encoded file content.
+        file_bytes (bytes): Raw binary content.
 
     Returns:
         str: Path to the saved temporary file.
     """
-    # Temporary directory
     tmp_dir = tempfile.gettempdir()
     filepath = os.path.join(tmp_dir, filename)
 
-    # Decode and save
     with open(filepath, "wb") as f:
-        f.write(base64.b64decode(b64data))
+        f.write(file_bytes)
 
     return filepath
 
@@ -100,6 +100,7 @@ class ChatClient:
         self.load_config()
         self.peers = {}       # peer_id -> RTCPeerConnection
         self.channels = {}    # peer_id -> DataChannel
+        self.chunk_buffers = {} # peer_id -> list of chunks
         self.keys = {}
         self.channel_open = False
         self.ws = None
@@ -108,6 +109,7 @@ class ChatClient:
             "sendfile": self.cmd_sendfile
         }
         self.host_id = None
+        self.default_server = "signalingserverdomain.download"
 
     def load_config(self):
         """
@@ -146,28 +148,7 @@ class ChatClient:
         with open(filepath, "rb") as f:
             data = f.read()
 
-        filename = os.path.basename(filepath)
-
-        # Base64 encode so it can be sent as a string
-        b64data = base64.b64encode(data).decode("ascii")
-
-        # Build the json payload
-        payload = json.dumps({
-            "type": "file",
-            "name": filename,
-            "content": b64data
-        })
-
-        # Send to peers
-        if self.ishost:
-            for other_id, ch in self.channels.items():
-                encrypted = self.encrypt_message(other_id, f"{payload}")
-                ch.send(encrypted)
-        else:
-            encrypted = self.encrypt_message(self.host_id, f"{payload}")
-            self.channels[self.host_id].send(encrypted)
-
-        print(f"File {filename} sent ({len(data)} bytes).")
+        asyncio.create_task(self.send_message("file", data, filename=os.path.basename(filepath)))
 
     def encrypt_message(self, peer_id, plaintext):
         """
@@ -243,32 +224,54 @@ class ChatClient:
     def get_server_info(self):
         """
         Retrieve or update the server URL from the configuration or user input.
+        Always ensures the URL starts with 'https://'.
+
+        Args:
+            default_server (str): The fallback/default server URL.
 
         Returns:
-            str: The server URL.
+            str: The chosen server URL with 'https://' prefix.
         """
-        if "server_url" in self.config:
+
+        def ensure_https(url: str) -> str:
+            url = url.strip()
+            # Find if there's a scheme (like http:// or ftp://) and remove it
+            if "://" in url:
+                url = url.split("://", 1)[1]
+            # Prepend https://
+            return "https://" + url
+
+        saved_server = self.config.get("server_url")
+
+        if saved_server:
             print("Where do you want to connect?")
-            print("(0) Saved server")
-            print("(00) See saved server")
-            print("(1) Change server")
-            choice = input("Enter number: ").strip()
+            print(f"(0) Default server ({self.default_server})")
+            print(f"(1) Saved server   ({saved_server})")
+            print("(2) Change server")
             while True:
+                choice = input("Enter number: ").strip()
                 if choice == "0":
+                    return ensure_https(self.default_server)
+                elif choice == "1":
+                    return ensure_https(saved_server)
+                elif choice == "2":
+                    server_url = input("Enter server URL: ").strip()
+                    self.config["server_url"] = ensure_https(server_url)
+                    self.save_config()
                     return self.config["server_url"]
-                elif choice == "00":
-                    print(f'Saved URL: {self.config["server_url"]}')
-                    choice = input("Enter number: ").strip()
+        else:
+            print("Where do you want to connect?")
+            print(f"(0) Default server ({self.default_server})")
+            print("(1) Custom server")
+            while True:
+                choice = input("Enter number: ").strip()
+                if choice == "0":
+                    return ensure_https(self.default_server)
                 elif choice == "1":
                     server_url = input("Enter server URL: ").strip()
-                    self.config["server_url"] = server_url
+                    self.config["server_url"] = ensure_https(server_url)
                     self.save_config()
-                    return server_url
-        else:
-            server_url = input("Enter server URL: ").strip()
-            self.config["server_url"] = server_url
-            self.save_config()
-            return server_url
+                    return self.config["server_url"]
 
     async def connect_server(self, url):
         """
@@ -325,60 +328,196 @@ class ChatClient:
                 break
             msg = msg.strip()
             if msg.startswith('/'):
-                parts = shlex.split(msg)  # ["/command", "arg 1", "arg2", ...]
+                parts = shlex.split(msg)  # ["/command", "arg1", "arg2", ...]
                 cmd = parts[0][1:]
                 args = parts[1:]
                 if cmd in self.commands:
                     self.commands[cmd](*args)
                     continue
-            payload = json.dumps({
-                "type": "text",
-                "content": f"[{self.name}] {msg}"
-            })
+
+            # Build the message
+            text_payload = f"[{self.name}] {msg}"
+            await self.send_message("text", text_payload)
+
+    async def send_message(self, msg_type, content, filename=None):
+        """
+        Send a message (text or file), automatically chunking if needed.
+        Universal approach: everything is base64-encoded first.
+        """
+        # Convert content to bytes
+        msg_bytes = content.encode("utf-8") if msg_type == "text" else content
+
+        # Base64 encode entire content
+        full_b64 = base64.b64encode(msg_bytes).decode("ascii")
+        total_len = len(full_b64)
+        chunk_total = math.ceil(total_len / CHUNK_SIZE)
+        msg_id = str(uuid.uuid4())
+        for i in range(chunk_total):
+            start = i * CHUNK_SIZE
+            end = start + CHUNK_SIZE
+            chunk_content = full_b64[start:end]
+
+            chunk_payload = {
+                "type": msg_type,
+                "msg_id": msg_id,
+                "chunk_index": i,
+                "chunk_total": chunk_total,
+                "content": chunk_content
+            }
+            if filename:
+                chunk_payload["name"] = filename
+
+            json_payload = json.dumps(chunk_payload)
+
+            # Send to peers
             if self.ishost:
                 for other_id, ch in self.channels.items():
-                    encrypted = self.encrypt_message(other_id, payload)
-                    ch.send(encrypted)
+                    ch.send(self.encrypt_message(other_id, json_payload))
             else:
-                encrypted = self.encrypt_message(self.host_id, payload)
-                self.channels[self.host_id].send(encrypted)
+                self.channels[self.host_id].send(self.encrypt_message(self.host_id, json_payload))
+
+    def _reconstruct_chunks(self, peer_id, msg_id):
+        """
+        Reconstruct chunks from message ID but DO NOT decode.
+        Returns a dict like:
+        {"type": "text" or "file", "content": <base64 string>, "name": optional}
+        Assumes all expected chunks are present in the buffer.
+        """
+        peer_buf = self.chunk_buffers.get(peer_id, {})
+        chunks = peer_buf.get(msg_id)
+        if not chunks:
+            return None
+        try:
+            # Ensure we have unique chunk_index -> chunk mapping (ignore duplicate arrivals)
+            idx_map = {}
+            for c in chunks:
+                idx = c.get("chunk_index", 0)
+                # prefer the first received chunk for a particular index
+                if idx not in idx_map:
+                    idx_map[idx] = c
+
+            # Build ordered list by index
+            ordered = [idx_map[i] for i in sorted(idx_map.keys())]
+
+            combined = {"type": ordered[0].get("type", "text")}
+
+            # Join base64 fragments in order WITHOUT decoding
+            b64_full = "".join(chunk["content"] for chunk in ordered)
+            combined["content"] = b64_full
+
+            if combined["type"] == "file":
+                # preserve original filename if present
+                combined["name"] = ordered[0].get("name", "unknown")
+
+            # Cleanup buffer for this msg_id
+            peer_buf.pop(msg_id, None)
+            if not peer_buf:
+                self.chunk_buffers.pop(peer_id, None)
+            return combined
+        except Exception as e:
+            print(f"Error reconstructing chunks for {peer_id} msg_id {msg_id}: {e}")
+            # attempt best-effort cleanup
+            try:
+                peer_buf.pop(msg_id, None)
+                if not peer_buf:
+                    self.chunk_buffers.pop(peer_id, None)
+            except Exception:
+                pass
+            return None
 
     def handle_message(self, peer_id, msg):
         """
-        Handle a received encrypted message from a peer.
-
-        Args:
-            peer_id (str): ID of the peer who sent the message.
-            msg (str): Base64-encoded ciphertext JSON message.
+        Handle a received encrypted message from a peer, including numeric chunked messages.
+        The reconstructor returns base64 content only; decoding happens here.
         """
-        decrypted = self.decrypt_message(peer_id, msg)
+        try:
+            decrypted = self.decrypt_message(peer_id, msg)
+        except Exception as e:
+            print(f"Failed to decrypt message from {peer_id}: {e}")
+            return
+
         try:
             data = json.loads(decrypted)
         except json.JSONDecodeError:
-            print("Invalid message")
+            print(f"Invalid JSON message from {peer_id}")
             return
 
-        match data["type"]:
-            case "text":
-                plaintext = data["content"]
-                print(plaintext)
-            case "file":
-                b64data = data["content"]
-                filename = data["name"]
-                filepath = get_file_path(filename, b64data)
-                print('file:///' + filepath.replace("\\", "/"))
+        msg_id = data.get("msg_id")
+        chunk_total = int(data.get("chunk_total", 1))
 
+        # If a msg_id is present we treat it as chunked (even if chunk_total == 1).
+        if msg_id:
+            # Ensure buffer structures exist
+            if peer_id not in self.chunk_buffers:
+                self.chunk_buffers[peer_id] = {}
+            if msg_id not in self.chunk_buffers[peer_id]:
+                self.chunk_buffers[peer_id][msg_id] = []
+
+            # Avoid storing exact duplicate chunk objects (same index + content)
+            incoming_index = data.get("chunk_index", 0)
+            existing = self.chunk_buffers[peer_id][msg_id]
+            duplicate = False
+            for ex in existing:
+                if ex.get("chunk_index") == incoming_index and ex.get("content") == data.get("content"):
+                    duplicate = True
+                    break
+            if not duplicate:
+                existing.append(data)
+
+            # If we haven't got all pieces yet, wait
+            if len({c.get("chunk_index") for c in self.chunk_buffers[peer_id][msg_id]}) < chunk_total:
+                return
+
+            # All chunks present -> reconstruct (reconstructor will clean up buffer)
+            reconstructed = self._reconstruct_chunks(peer_id, msg_id)
+            if reconstructed is None:
+                print(f"Failed to reconstruct message from {peer_id} msg_id {msg_id}")
+                return
+            final = reconstructed
+        else:
+            # No msg_id -- treat as a single, self-contained message (content is base64)
+            final = data
+
+        # Now decode the base64 content (reconstructor returned base64 string)
+        b64_content = final.get("content", "")
+        try:
+            raw_bytes = base64.b64decode(b64_content)
+        except Exception as e:
+            print(f"Failed to base64-decode content from {peer_id}: {e}")
+            return
+
+        msg_type = final.get("type", "text")
+        if msg_type == "text":
+            try:
+                print(raw_bytes.decode("utf-8"))
+            except Exception as e:
+                # If decoding fails, show a hex preview instead of crashing
+                print(f"(text decode error) raw bytes from {peer_id}: {raw_bytes[:64].hex()}... ({e})")
+        elif msg_type == "file":
+            filename = final.get("name", "unknown")
+            try:
+                filepath = get_file_path(filename, raw_bytes)
+                print('file:///' + filepath.replace("\\", "/"))
+            except Exception as e:
+                print(f"Failed to save file from {peer_id}: {e}")
+        else:
+            print(f"Unknown message type from {peer_id}: {msg_type}")
+
+        # Relay unchanged original encrypted message if host
         if self.ishost:
-            # Relay to all other peers
             for other_id, ch in self.channels.items():
                 if other_id != peer_id:
-                    ch.send(self.encrypt_message(other_id, msg))
+                    try:
+                        ch.send(self.encrypt_message(other_id, msg))
+                    except Exception as e:
+                        print(f"Failed to relay message to {other_id}: {e}")
 
     async def run(self):
         """
         Main entry point: connect to the server, join a room, and listen for events.
         """
         server_url = self.get_server_info()
+        print(server_url)
         await self.connect_server(server_url)
         await self.join_room()
         await self.listen_server()
@@ -418,11 +557,7 @@ class ChatClient:
             logging.info(f"Channel open with {peer_id}")
             if not self.channel_open:
                 asyncio.create_task(self.async_input_loop())
-            payload = json.dumps({
-                "type": "text",
-                "content": f"{self.name} is hosting the room"
-            })
-            channel.send(self.encrypt_message(peer_id, payload))
+            asyncio.create_task(self.send_message('text', f"{self.name} is hosting the room"))
             self.channel_open = True
 
         @pc.on("iceconnectionstatechange")
@@ -459,11 +594,7 @@ class ChatClient:
         @channel.on("open")
         def on_open():
             asyncio.create_task(self.async_input_loop())
-            payload = json.dumps({
-                "type": "text",
-                "content": f"{self.name} joined the room"
-            })
-            channel.send(self.encrypt_message(host_id, payload))
+            asyncio.create_task(self.send_message('text', f"{self.name} joined the room"))
 
         @pc.on("datachannel")
         def on_datachannel(channel):
