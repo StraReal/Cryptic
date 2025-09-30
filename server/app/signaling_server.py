@@ -17,7 +17,11 @@ rooms = {} # This will now store Rooms objects
 
 @routes.get('/ws')
 async def websocket_handler(request):
+    # Create WebSocket response with proper configuration
     ws = web.WebSocketResponse(autoping=True, heartbeat=30)
+    
+    # Prepare the WebSocket connection
+    # This handles the handshake properly for both browser and Electron clients
     await ws.prepare(request)
 
     current_room = None
@@ -105,6 +109,29 @@ async def websocket_handler(request):
                             }
                             await ws.send_str(json.dumps({"type": "error", "message": error_messages.get(join_status, "Unknown error")}))
 
+                elif t == "message":
+                    if current_room and current_room in rooms:
+                        room = rooms[current_room]
+                        message_text = data.get("text", "")
+                        sender = data.get("from", current_name)
+                        
+                        # Create a properly formatted message
+                        import time
+                        message_payload = {
+                            "type": "message",
+                            "id": f"{current_room}_{ip_addr}_{int(time.time() * 1000)}",
+                            "text": message_text,
+                            "sender": sender,
+                            "timestamp": time.strftime("%H:%M"),
+                            "room": current_room
+                        }
+                        
+                        # Broadcast message to all clients in the room (including sender)
+                        for client_ip, client_ws in room.websockets.items():
+                            if not client_ws.closed:
+                                logging.info(f"Sending message from {sender} to {client_ip} in room {current_room}")
+                                await client_ws.send_str(json.dumps(message_payload))
+                
                 elif t in ("offer", "answer", "ice", "bye"):
                     if current_room and current_room in rooms:
                         room = rooms[current_room]
@@ -186,9 +213,9 @@ async def index(request: web.Request):
 
 app = web.Application()
 app.add_routes(routes)
-app.router.add_static('/static/', path='static', name='static')
+# app.router.add_static('/static/', path='static', name='static')  # Commented out - static directory doesn't exist
 app.router.add_get("/", index)
 app.router.add_get("/ws", websocket_handler)
 
 if __name__ == '__main__':
-    web.run_app(app, host="0.0.0.0", port=5000)
+    web.run_app(app, host="0.0.0.0", port=5001)
