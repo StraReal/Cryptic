@@ -13,21 +13,24 @@
     <a href="https://github.com/StraReal/Cryptic" class="tag">GitHub</a>
     <a href="https://discord.gg/tuX9hkvFC2" class="tag">Discord</a>
     <h1>Hello, visitor!</h1>
-    <p>This is the domain I use for my signaling server.</p>
+    <p>This is the publicly available domain Cryptic gives to its users to use for free and to be able to test it without the hassle of setting up their own server.</p>
     <p>
       This is part of the project at
       <a href="https://github.com/StraReal/Cryptic" target="_blank" rel="noopener">https://github.com/StraReal/Cryptic</a>,
-      you should check it out, I swear it's cool!
+      you should check it out, help is much appreciated
     </p>
     <p>
-      What it aims to do is create actually private chatting, but I definitely need help for it since there is no team behind it, just me.
+      What it aims to do is create actually private chatting with FOSS, but we definitely need help for it since our team is mostly composed of recent grads or even less qualified people.
+    </p>
+    <p>
+      This website was made by people who have NO idea how to actually make websites or landing pages, so if you find it unfinished or unpolished or anything else, contact us and please help us by contributing!
     </p>
 
     <div id="interactive-section" style="margin-top: 20px; background: var(--panel); padding: 20px; border-radius: 15px;">
-      <h2>How connecting with UDP Hole punching works</h2>
+      <h2>How connecting with aioRTC works</h2>
 
       <div id="main-text" style="color: var(--text); margin-bottom: 15px;">
-        Step 1: The client creates a room, contacting the signaling server and telling it its IP and port.
+        Cryptic's public signaling server and (for now) website
       </div>
 
       <div id="step-controls" style="display: flex; justify-content: space-between;">
@@ -39,17 +42,17 @@
     </div>
 
     <footer>
-      <span>Made to protect — self‑hosted via Cloudflare Tunnel</span>
+      <span>Made to protect - self‑hosted via Cloudflare Tunnel</span>
     </footer>
   </main>
 
   <script>
     // Passages
     const steps = [
-      "Step 1: The client creates a room, contacting the signaling server and telling it its IP and port.",
+      "Step 1: The client creates a room, contacting the signaling server.",
       "Step 2: The second client asks the signaling server to let it join said room.",
-      "Step 3: The signaling server tells peer A peer B's IP:port and viceversa.",
-      "Step 4: Peer A and peer B start sending each other packets until one gets through, establishing a connection (punching a hole).",
+      "Step 3: The signaling server asks peer A for an 'offer', and when it receives it, relays it to peer B, who responds with an 'answer'.",
+      "Step 4: Peer A and peer B go through all the ICE candidates to try and establish a connection.",
       "Step 5: A connection is now opened and the two can now chat between them without their messages passing through any server."
     ];
     const steps_rect = [
@@ -94,33 +97,34 @@
     <div style="position:absolute; top:50%; right:15%; width:19%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
 
     <div class="moving-text" style="--start: 40%; --end: 16%; --top: 30%; --anim: moveTextR;">
-    PEER 93.184.216.34:4999❯</div>
+    aioRTC offer❯</div>
     <div class="moving-text" style="--start: 40%; --end: 16%; --top: 30%;">
-    ❮PEER 192.168.1.1:9999
+    ❮aioRTC answer
   `,
   // Step 4
   `
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
+    <div style="position: relative; height: 200px; width: 100%;">
+  <!-- Left PC -->
+  <img src="static/assets/PClogo.png" alt="PC"
+       style="position:absolute; top:25%; left:5%; height:50%; width:auto;">
 
-    <div style="position:absolute; top:50%; left:15%; right:15%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%;">
-    HELLO❯</div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.3s;">
-    HELLO❯</div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.6s;">
-    HELLO❯</div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.9s;">
-    HELLO❯</div>
+  <!-- Right PC -->
+  <img src="static/assets/PClogo.png" alt="PC"
+       style="position:absolute; top:25%; right:5%; height:50%; width:auto;">
 
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --anim: moveTextR;">
-    ❮HELLO</div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.4s; --anim: moveTextR;">
-    ❮HELLO</div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 0.7s; --anim: moveTextR;">
-    ❮HELLO</div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 1s; --anim: moveTextR;">
-    ❮HELLO
+  <!-- Circles next to left PC -->
+  <div style="position: absolute; top: 40%; left: 15%; display: flex; flex-direction: column; gap: 10px;">
+    <div class="circle"></div>
+    <div class="circle"></div>
+    <div class="circle"></div>
+    <div class="circle"></div>
+    <div class="circle"></div>
+  </div>
+
+  <!-- Dashed line (example) -->
+  <div style="position:absolute; top:50%; left:15%; right:15%; border-top: 6px dashed black; transform: translateY(-50%);"></div>
+</div>
+
   `,
   // Step 5
   `

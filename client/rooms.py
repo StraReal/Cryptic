@@ -337,18 +337,16 @@ class ChatClient:
 
             # Build the message
             text_payload = f"[{self.name}] {msg}"
-            await self.send_message("text", text_payload)
+            await self.send_message("text", text_payload.encode("utf-8"))
 
-    async def send_message(self, msg_type, content, filename=None):
+    async def send_message(self, msg_type, content: bytes, filename=None):
         """
         Send a message (text or file), automatically chunking if needed.
         Universal approach: everything is base64-encoded first.
+        content must already be bytes.
         """
-        # Convert content to bytes
-        msg_bytes = content.encode("utf-8") if msg_type == "text" else content
-
         # Base64 encode entire content
-        full_b64 = base64.b64encode(msg_bytes).decode("ascii")
+        full_b64 = base64.b64encode(content).decode("ascii")
         total_len = len(full_b64)
         chunk_total = math.ceil(total_len / CHUNK_SIZE)
         msg_id = str(uuid.uuid4())
@@ -369,7 +367,6 @@ class ChatClient:
 
             json_payload = json.dumps(chunk_payload)
 
-            # Send to peers
             if self.ishost:
                 for other_id, ch in self.channels.items():
                     ch.send(self.encrypt_message(other_id, json_payload))
@@ -430,6 +427,8 @@ class ChatClient:
         Handle a received encrypted message from a peer, including numeric chunked messages.
         The reconstructor returns base64 content only; decoding happens here.
         """
+        content = None
+        filename = None
         try:
             decrypted = self.decrypt_message(peer_id, msg)
         except Exception as e:
@@ -489,11 +488,14 @@ class ChatClient:
         msg_type = final.get("type", "text")
         if msg_type == "text":
             try:
-                print(raw_bytes.decode("utf-8"))
+                content = raw_bytes
+                print(content.decode("utf-8"))
             except Exception as e:
                 # If decoding fails, show a hex preview instead of crashing
                 print(f"(text decode error) raw bytes from {peer_id}: {raw_bytes[:64].hex()}... ({e})")
+                return
         elif msg_type == "file":
+            content = raw_bytes
             filename = final.get("name", "unknown")
             try:
                 filepath = get_file_path(filename, raw_bytes)
@@ -508,7 +510,7 @@ class ChatClient:
             for other_id, ch in self.channels.items():
                 if other_id != peer_id:
                     try:
-                        ch.send(self.encrypt_message(other_id, msg))
+                        asyncio.create_task(self.send_message(msg_type, content, filename))
                     except Exception as e:
                         print(f"Failed to relay message to {other_id}: {e}")
 
@@ -557,7 +559,7 @@ class ChatClient:
             logging.info(f"Channel open with {peer_id}")
             if not self.channel_open:
                 asyncio.create_task(self.async_input_loop())
-            asyncio.create_task(self.send_message('text', f"{self.name} is hosting the room"))
+            asyncio.create_task(self.send_message('text', f"{self.name} is hosting the room".encode("utf-8")))
             self.channel_open = True
 
         @pc.on("iceconnectionstatechange")
@@ -594,7 +596,7 @@ class ChatClient:
         @channel.on("open")
         def on_open():
             asyncio.create_task(self.async_input_loop())
-            asyncio.create_task(self.send_message('text', f"{self.name} joined the room"))
+            asyncio.create_task(self.send_message('text', f"{self.name} joined the room".encode("utf-8")))
 
         @pc.on("datachannel")
         def on_datachannel(channel):
