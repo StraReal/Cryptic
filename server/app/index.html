@@ -5,166 +5,50 @@
   <link rel="icon" type="image/png" href="static/assets/crypticlogo.png">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cryptic</title>
-  <meta name="description" content="Landing page for the Cryptic signaling server." />
+  <title>Cryptic: Secure, Private Communication</title>
+  <meta name="description" content="Cryptic provides secure, peer-to-peer chat and calls. Open-source, easy to use, and private by design. Start connecting safely today." />
+  <meta name="keywords" content="Cryptic, secure chat, private messaging, open-source communication, peer-to-peer video, WebRTC chat, encrypted calls">
 </head>
 <body>
   <main>
-    <a href="https://github.com/StraReal/Cryptic" class="tag">GitHub</a>
-    <a href="https://discord.gg/tuX9hkvFC2" class="tag">Discord</a>
-    <h1>Hello, visitor!</h1>
-    <p>This is the publicly available domain Cryptic gives to its users to use for free and to be able to test it without the hassle of setting up their own server.</p>
-    <p>
-      This is part of the project at
-      <a href="https://github.com/StraReal/Cryptic" target="_blank" rel="noopener">https://github.com/StraReal/Cryptic</a>,
-      you should check it out, help is much appreciated
-    </p>
-    <p>
-      What it aims to do is create actually private chatting with FOSS, but we definitely need help for it since our team is mostly composed of recent grads or even less qualified people.
-    </p>
-    <p>
-      This website was made by people who have NO idea how to actually make websites or landing pages, so if you find it unfinished or unpolished or anything else, contact us and please help us by contributing!
-    </p>
+    <nav>
+      <a href="https://github.com/StraReal/Cryptic" class="tag">GitHub</a>
+      <a href="https://discord.gg/tuX9hkvFC2" class="tag">Discord</a>
+    </nav>
 
-    <div id="interactive-section" style="margin-top: 20px; background: var(--panel); padding: 20px; border-radius: 15px;">
-      <h2>How connecting with aioRTC works</h2>
+    <header>
+      <h1>Welcome to Cryptic</h1>
+      <p>Private, secure communication made simple. Connect with friends or collaborators without unnecessary complexity or centralized control</p>
+    </header>
 
-      <div id="main-text" style="color: var(--text); margin-bottom: 15px;">
-        Cryptic's public signaling server and (for now) website
-      </div>
+    <section>
+      <h2>Why Cryptic?</h2>
+      <ul>
+        <li><strong>Private and secure:</strong> Peer-to-peer connections keep your conversations between you and the people you’re talking to.</li>
+        <li><strong>Open source:</strong> Explore the code, contribute, or build your own projects using Cryptic’s foundation.</li>
+        <li><strong>Fast setup:</strong> Get started quickly, no complicated configuration required.</li>
+        <li><strong>Flexible:</strong> Use it for messaging, voice calls, video calls, or experimenting with WebRTC in your own apps.</li>
+      </ul>
+    </section>
 
-      <div id="step-controls" style="display: flex; justify-content: space-between;">
-        <button id="prev-btn" style="background: var(--accent); color: var(--text); border: none; padding: 6px 12px; border-radius: 8px; cursor: pointer;">Prev</button>
-        <button id="next-btn" style="background: var(--accent); color: var(--text); border: none; padding: 6px 12px; border-radius: 8px; cursor: pointer;">Next</button>
-      </div>
-    </div>
-        <div id="drawing-area" style="margin-top: 30px; background: white; height: 200px; border-radius: 15px; border: 1px solid #ccc; position: relative;">
-    </div>
+    <section>
+      <h2>Get Started</h2>
+      <p>Whether you’re experimenting with peer-to-peer communication or just want a private chat, Cryptic makes it simple:</p>
+      <ul>
+        <li>Try the platform directly using the public domain "signalingserverdomain.download"</li>
+        <li>Explore the <a href="https://github.com/StraReal/Cryptic" target="_blank" rel="noopener">source code on GitHub</a> and contribute to the project.</li>
+        <li>Join the community on <a href="https://discord.gg/tuX9hkvFC2" target="_blank" rel="noopener">Discord</a> for support and discussion.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Who We Are</h2>
+      <p>Cryptic is built by a small team of developers passionate about privacy and open-source communication. We’re constantly improving the platform and welcome contributions from anyone interested in helping it grow.</p>
+    </section>
 
     <footer>
-      <span>Made to protect - self‑hosted via Cloudflare Tunnel</span>
+      <span>Made to protect privacy. Self-hosted via Cloudflare Tunnel.</span>
     </footer>
   </main>
-
-  <script>
-    // Passages
-    const steps = [
-      "Step 1: The client creates a room, contacting the signaling server.",
-      "Step 2: The second client asks the signaling server to let it join said room.",
-      "Step 3: The signaling server asks peer A for an 'offer', and when it receives it, relays it to peer B, who responds with an 'answer'.",
-      "Step 4: Peer A and peer B go through all the ICE candidates to try and establish a connection.",
-      "Step 5: A connection is now opened and the two can now chat between them without their messages passing through any server."
-    ];
-    const steps_rect = [
-  // Step 1
-  `
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:50px; left:10%; height:50%; width:auto;">
-    <img src="static/assets/serverlogo.png" alt="Server" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); height:40%; width:auto;">
-    <div class="dashed-line"
-    style="--line-duration: 1s; --line-left: 15%;"></div>
-
-    <div class="moving-text" style="--start: 16%; --end: 40%; --top: 30%">
-    CREATE ABC123<br> 93.184.216.34:4999❯
-
-    </div>
-  `,
-  // Step 2
-  `
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
-    <img src="static/assets/serverlogo.png" alt="Server" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); height:40%; width:auto;">
-
-    <div class="dashed-line"
-    style="--line-left: 15%;"></div>
-
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
-
-    <div class="dashed-line"
-    style="--line-duration: 1s; --line-right: 15%;"></div>
-
-    <div style="position:absolute; color: black; top:20%; left:50%; transform:translate(-50%,-50%);
-              font-size:70%; font-weight:bold;">
-    ABC123:<br> 93.184.216.34:4999</div>
-
-    <div class="moving-text" style="--start: 16%; --end: 40%; --top: 30%; --anim: moveTextR;">
-    &nbsp;&nbsp;JOIN ABC123<br> ❮192.168.1.1:9999
-  `,
-  // Step 3
-  `
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
-    <img src="static/assets/serverlogo.png" alt="Server" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); height:40%; width:auto;">
-    <div style="position:absolute; top:50%; left:15%; width:19%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
-    <div style="position:absolute; top:50%; right:15%; width:19%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
-
-    <div class="moving-text" style="--start: 40%; --end: 16%; --top: 30%; --anim: moveTextR;">
-    aioRTC offer❯</div>
-    <div class="moving-text" style="--start: 40%; --end: 16%; --top: 30%;">
-    ❮aioRTC answer
-  `,
-  // Step 4
-  `
-    <div style="position: relative; height: 200px; width: 100%;">
-  <!-- Left PC -->
-  <img src="static/assets/PClogo.png" alt="PC"
-       style="position:absolute; top:25%; left:5%; height:50%; width:auto;">
-
-  <!-- Right PC -->
-  <img src="static/assets/PClogo.png" alt="PC"
-       style="position:absolute; top:25%; right:5%; height:50%; width:auto;">
-
-  <!-- Circles next to left PC -->
-  <div style="position: absolute; top: 40%; left: 15%; display: flex; flex-direction: column; gap: 10px;">
-    <div class="circle"></div>
-    <div class="circle"></div>
-    <div class="circle"></div>
-    <div class="circle"></div>
-    <div class="circle"></div>
-  </div>
-
-  <!-- Dashed line (example) -->
-  <div style="position:absolute; top:50%; left:15%; right:15%; border-top: 6px dashed black; transform: translateY(-50%);"></div>
-</div>
-
-  `,
-  // Step 5
-  `
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; left:10%; height:50%; width:auto;">
-    <img src="static/assets/PClogo.png" alt="PC" style="position:absolute; top:25%; right:10%; height:50%; width:auto;">
-    <div style="position:absolute; top:50%; left:15%; right:15%; border-top: 6px dashed black; transform: translateY(-50%); margin: 0 10%;"></div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%;">
-    Hi there!❯</div>
-    <div class="moving-text" style="--start: 16%; --end: 80%; --top: 38%; --delay: 1.8s; --anim: moveTextR;">
-    ❮Hello!
-  `
-];
-
-    let currentStep = 0;
-
-    const mainText = document.getElementById('main-text');
-    const prevBtn = document.getElementById('prev-btn');
-    const nextBtn = document.getElementById('next-btn');
-    const drawingArea = document.getElementById('drawing-area');
-
-    function updateStep() {
-      mainText.textContent = steps[currentStep];
-      prevBtn.disabled = currentStep === 0;
-      nextBtn.disabled = currentStep === steps.length - 1;
-      drawingArea.innerHTML = steps_rect[currentStep];
-    }
-
-    prevBtn.addEventListener('click', () => {
-      if(currentStep > 0) currentStep--;
-      updateStep();
-    });
-
-    nextBtn.addEventListener('click', () => {
-      if(currentStep < steps.length - 1) currentStep++;
-      updateStep();
-    });
-
-    // Initialize visualization
-    updateStep();
-  </script>
-
 </body>
 </html>

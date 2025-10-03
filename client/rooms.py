@@ -15,6 +15,7 @@ import tkinter as tk
 from tkinter import filedialog
 import tempfile
 import math, uuid
+import media
 
 CONFIG_FILE = "config.json"
 CHUNK_SIZE = 8000
@@ -538,6 +539,7 @@ class ChatClient:
         self.peers[peer_id] = pc
         channel = pc.createDataChannel("chat")
         self.channels[peer_id] = channel
+        self.add_media_tracks(pc, peer_id)
 
         @pc.on("connectionstatechange")
         def on_connection_state():
@@ -592,6 +594,7 @@ class ChatClient:
         self.channels[host_id] = channel
         key = Fernet.generate_key()
         self.keys[host_id] = key
+        self.add_media_tracks(pc, host_id)
 
         @channel.on("open")
         def on_open():
@@ -607,6 +610,14 @@ class ChatClient:
         @pc.on("iceconnectionstatechange")
         def on_ice_state():
             logging.info(f"ICE state with host: {pc.iceConnectionState}")
+
+    def add_media_tracks(self, pc, peer_id):
+        video_track = media.VideoChannelTrack()
+        audio_track = media.AudioChannelTrack()
+        pc.addTrack(video_track)
+        pc.addTrack(audio_track)
+        self.peers[peer_id]['video'] = video_track
+        self.peers[peer_id]['audio'] = audio_track
 
     async def handle_signaling(self, peer_id, data):
         """
@@ -667,3 +678,5 @@ class ChatClient:
             # Create a Fernet key for this peer
             self.keys[peer_id] = fernet_key
             await pc.setRemoteDescription(answer_desc)
+
+
