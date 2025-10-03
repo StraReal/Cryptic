@@ -11,6 +11,7 @@ class Rooms:
         self._count=0
         self._locked=False
         self._lock=Lock() ## mutex lock primitive for shared state during async functions
+        self.websockets = {} # {ip: ws}
 
     def addclient(self, newuser: Users, provided_password: str) -> int:
         """
@@ -72,24 +73,24 @@ class Rooms:
         return False
 
 
+    def getownerinfo(self):
+        return self._owner
+
     def dropclient(self, peerip:str):
         """
             Drop a specific user from the room identified by their ip address
         """
-        idx=-1
-        for i, client  in enumerate(self._clients):
-            if client.getipaddr()==peerip:
-                idx=i
-        del self._clients[idx]
-
+        self._clients = [client for client in self._clients if client.getipaddr() != peerip]
 
     def getclientnos(self):
         return len(self._clients)
 
-    def getotherclients(self, peerip:str):
+    def getotherclients(self, peerip:str, json_encoder=None):
         """
-            Get all the client info except the your ownself
+        Get all the client info except your ownself.
+        If a JSON encoder is provided, it returns a list of JSON-serialized objects.
         """
-        for i,val in enumerate(self._clients):
-            if val.getipaddr()==peerip:
-                return self._clients[0:i]+self._clients[i+1:]
+        other_clients = [client for client in self._clients if client.getipaddr() != peerip]
+        if json_encoder:
+            return [json_encoder(client) for client in other_clients]
+        return other_clients
