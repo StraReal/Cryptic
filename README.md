@@ -15,7 +15,7 @@ Cryptic is open source and fully self-hostable, making it suitable for anyone wh
 ## Technical Details
 
 - **Peer-to-peer messaging**: Once a connection is established, all messages travel directly between clients.  
-- **WebRTC and UDP Hole Punching**: Cryptic uses WebRTC to establish P2P connections even when users are behind NATs. UDP hole punching allows peers to open direct communication channels through firewalls and NAT routers.  
+- **webRTC with aioRTC**: Cryptic uses WebRTC to establish P2P connections, specifically the aioRTC library, which facilitates it.
 - **Signaling Server**: The signaling server is only used to exchange connection information between peers. Messages never pass through it. You can use the provided public server or host your own.  
 
 ---
