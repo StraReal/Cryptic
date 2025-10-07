@@ -4,6 +4,7 @@ import MainPage from "@/features/main/components/main";
 import ChatRoomsPage from "@/features/browse/components/browse";
 import { useContext } from "react";
 import AuthPage from "@/features/auth/components/auth-view";
+import ChatPage from "@/features/chat/components/chat";
 
 // Router configuration
 export const router = createBrowserRouter([
@@ -23,6 +24,7 @@ export const router = createBrowserRouter([
         path: "browse",
         element: <ChatRoomsPage />,
       },
+      { path: "chat/:roomId", element: <ChatPage /> },
     ],
   },
   {
